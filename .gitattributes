@@ -1,0 +1,13 @@
+# Окончания строк: всё, что исполняется внутри Linux-контейнера,
+# обязано быть LF. CRLF в entrypoint.sh ломает запуск
+# ("bad interpreter: /usr/bin/env^M") и не ловится ничем, кроме запуска.
+
+*.sh          text eol=lf
+Dockerfile    text eol=lf
+.dockerignore text eol=lf
+*.yml         text eol=lf
+*.yaml        text eol=lf
+
+# Данные и документация — нормализация в LF на коммите
+*.md          text
+*.json        text

@@ -1,0 +1,39 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  lint:
+    name: shellcheck + exec-биты
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Установить shellcheck
+        run: sudo apt-get update && sudo apt-get install -y shellcheck
+
+      - name: shellcheck
+        run: shellcheck run.sh install.sh entrypoint.sh tests/smoke.sh
+
+      - name: Исполняемые биты скриптов в git
+        run: |
+          status=0
+          while IFS= read -r f; do
+            mode="$(git ls-files -s "$f" | awk '{print $1}')"
+            if [ "$mode" != "100755" ]; then
+              echo "::error::${f} не исполняемый в git (режим ${mode}). Запустите: git update-index --chmod=+x ${f}"
+              status=1
+            fi
+          done < <(git ls-files '*.sh')
+          exit "$status"
+
+  build:
+    name: docker build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Собрать образ
+        run: docker build -t pibox:ci .

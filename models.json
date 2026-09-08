@@ -1,0 +1,19 @@
+{
+  "providers": {
+    "local": {
+      "name": "Local Model API",
+      "baseUrl": "http://host.docker.internal:8080/v1",
+      "type": "openai",
+      "apiKey": "REPLACE_ME",
+      "models": [
+        {
+          "id": "local-model",
+          "name": "Local Model",
+          "maxTokens": 4096
+        }
+      ]
+    }
+  },
+  "defaultProvider": "local",
+  "defaultModel": "local-model"
+}
