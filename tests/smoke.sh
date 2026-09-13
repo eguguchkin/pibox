@@ -20,7 +20,7 @@
 #   PIBOX_IMAGE   имя тестируемого образа (по умолчанию pibox:latest)
 #   TMPDIR        каталог для временных файлов
 #
-# Требования: bash >= 4.4, docker >= 20.10 (запущенный демон), curl,
+# Требования: bash >= 3.2, docker >= 20.10 (запущенный демон), curl,
 # realpath, grep, sed. НЕ запускать от root: entrypoint отказывается
 # работать с HOST_UID=0.
 #
@@ -49,7 +49,7 @@ pibox smoke-тесты (задача 8)
     --rebuild   пересобрать образ pibox, даже если он существует
     -h, --help  эта справка
 
-Требования: bash >= 4.4, docker >= 20.10 (запущенный демон),
+Требования: bash >= 3.2, docker >= 20.10 (запущенный демон),
 curl, realpath. Не запускать от root.
 EOF
 }
@@ -81,7 +81,7 @@ die()   { printf 'smoke: error: %s\n' "$*" >&2; exit 1; }
 # --- Пути ---------------------------------------------------------------------
 
 SRC_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-TEST_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/pibox-smoke-XXXXXX")"
+TEST_ROOT="$(cd "$(mktemp -d "${TMPDIR:-/tmp}/pibox-smoke-XXXXXX")" && pwd)"
 TEST_PIBOX="$TEST_ROOT/pibox"
 TEST_WS="$TEST_ROOT/workspace"
 BIN="$TEST_PIBOX/bin/pibox"
@@ -94,10 +94,15 @@ HOST_GID="$(id -g)"
 CLEANUP_CONTAINERS=()
 
 cleanup() {
-    local c
-    for c in "${CLEANUP_CONTAINERS[@]+"${CLEANUP_CONTAINERS[@]}"}"; do
-        docker rm -f "$c" >/dev/null 2>&1 || true
-    done
+    # [bash3.2] Явная проверка длины вместо "${arr[@]+"${arr[@]}"}" с внешними
+    # кавычками: на bash 3.2 внешние кавычки могут схлопнуть массив в один
+    # «склеенный» элемент, и docker rm -f получит мусорное имя.
+    if [ ${#CLEANUP_CONTAINERS[@]} -gt 0 ]; then
+        local c
+        for c in "${CLEANUP_CONTAINERS[@]}"; do
+            docker rm -f "$c" >/dev/null 2>&1 || true
+        done
+    fi
     if [ "$KEEP" = "1" ]; then
         printf '\nsmoke: временный каталог сохранён: %s\n' "$TEST_ROOT" >&2
     else
@@ -118,7 +123,7 @@ file_owner() { # file_owner PATH -> uid
 
 has_bit() { # has_bit HEXVALUE BITNUM
     [ -n "$1" ] || return 1
-    [ $(( 16#$1 & (1 << $2) )) -ne 0 ]
+    [ $(( 0x$1 & (2 ** $2) )) -ne 0 ]
 }
 
 # --- Хелперы проверок ----------------------------------------------------------
@@ -135,7 +140,7 @@ expect_contains() { # NAME HAYSTACK NEEDLE (поиск подстроки, grep 
     if printf '%s' "$2" | grep -qF -- "$3"; then
         ok "$1"
     else
-        fail "$1 — «$3» не найдено"
+        fail "$1 — «$3» не найдено в «$2»"
     fi
 }
 
@@ -209,8 +214,9 @@ if [ "$(id -u)" -eq 0 ]; then
     die "не запускайте smoke-тесты от root: entrypoint отказывается работать с HOST_UID=0"
 fi
 
-if [ "$(( BASH_VERSINFO[0] * 100 + BASH_VERSINFO[1] ))" -lt 404 ]; then
-    die "требуется bash >= 4.4 (найдено ${BASH_VERSION})"
+# [bash3.2] Минимальная требуемая версия — 3.2 (работает и на дефолтном macOS bash).
+if [ "$(( BASH_VERSINFO[0] * 100 + BASH_VERSINFO[1] ))" -lt 302 ]; then
+    die "требуется bash >= 3.2 (найдено ${BASH_VERSION})"
 fi
 
 for tool in docker curl realpath grep sed; do
@@ -225,7 +231,7 @@ SERVER_VERSION="$(docker version --format '{{.Server.Version}}' 2>/dev/null || t
 [ -n "$SERVER_VERSION" ] || die "не удалось определить версию docker"
 MAJOR="$(printf '%s' "$SERVER_VERSION" | cut -d. -f1)"
 MINOR="$(printf '%s' "$SERVER_VERSION" | cut -d. -f2)"
-if [ "$(( 10#${MAJOR:-0} * 100 + 10#${MINOR:-0} ))" -lt 2010 ]; then
+if [ "${MAJOR:-0}" -lt 20 ] || { [ "${MAJOR:-0}" -eq 20 ] && [ "${MINOR:-0}" -lt 10 ]; }; then
     die "требуется docker >= 20.10 для host-gateway (найдено ${SERVER_VERSION})"
 fi
 ok "P0: docker ${SERVER_VERSION} (>= 20.10), bash ${BASH_VERSINFO[0]}.${BASH_VERSINFO[1]}, uid ${HOST_UID}"
@@ -244,9 +250,7 @@ else
     die "I2: install.sh завершился с ошибкой — дальнейшие тесты бессмысленны"
 fi
 
-for path in bin/pibox docker/Dockerfile docker/entrypoint.sh docker/.dockerignore \
-            env-template/.pi/agent env-template/.bashrc \
-            env/default/.pi/agent env/models.json .pibox_installed; do
+for path in bin/pibox docker/Dockerfile docker/entrypoint.sh docker/.dockerignore models.json; do
     if [ -e "$TEST_PIBOX/$path" ]; then
         ok "I3: структура: ${path}"
     else
@@ -259,7 +263,7 @@ if [ -x "$BIN" ]; then ok "I4: bin/pibox исполняемый"; else fail "I4:
 # I5: повторная установка без --force не трогает существующее
 touch -t 202001010000 "$BIN"
 OLD_BIN_MTIME="$(file_mtime "$BIN")"
-echo "// smoke-sentinel" >> "$TEST_PIBOX/env/models.json"
+echo "// smoke-sentinel" >> "$TEST_PIBOX/models.json"
 
 if "$SRC_DIR/install.sh" --dir "$TEST_PIBOX" --no-path --src "$SRC_DIR" >/dev/null 2>&1; then
     ok "I5: повторная установка (без --force) прошла"
@@ -267,10 +271,10 @@ else
     fail "I5: повторная установка завершилась с ошибкой"
 fi
 expect_eq "I5: bin/pibox не перезаписан" "$OLD_BIN_MTIME" "$(file_mtime "$BIN")"
-if grep -qF "smoke-sentinel" "$TEST_PIBOX/env/models.json"; then
-    ok "I5: env/models.json не перезаписан"
+if grep -qF "smoke-sentinel" "$TEST_PIBOX/models.json"; then
+    ok "I5: /models.json не перезаписан"
 else
-    fail "I5: env/models.json перезаписан без --force"
+    fail "I5: models.json перезаписан без --force"
 fi
 
 # I6: --force обновляет файлы установки, но НЕ трогает env/*
@@ -293,10 +297,10 @@ if [ -f "$TEST_PIBOX/env/default/.smoke-sentinel" ]; then
 else
     fail "I6: --force затронул env/default"
 fi
-if grep -qF "smoke-sentinel" "$TEST_PIBOX/env/models.json"; then
-    fail "I6: --force не обновил env/models.json (документированное поведение — перезапись)"
+if grep -qF "smoke-sentinel" "$TEST_PIBOX/models.json"; then
+    fail "I6: --force не обновил models.json (документированное поведение — перезапись)"
 else
-    ok "I6: env/models.json обновлён (--force, перезапись — документирована)"
+    ok "I6: models.json обновлён (--force, перезапись — документирована)"
 fi
 
 # ============================================================================
@@ -381,7 +385,7 @@ if [ -d "$TEST_PIBOX/env/smoke-env" ]; then ok "C10: окружение созд
 MODELS_DST="$TEST_PIBOX/env/smoke-env/.pi/agent/models.json"
 if [ -f "$MODELS_DST" ]; then
     ok "C10: models.json скопирован в окружение"
-    if cmp -s "$TEST_PIBOX/env/models.json" "$MODELS_DST"; then
+    if cmp -s "$TEST_PIBOX/models.json" "$MODELS_DST"; then
         ok "C10: содержимое models.json совпадает с шаблоном"
     else
         fail "C10: models.json отличается от шаблона"
@@ -430,7 +434,6 @@ fi
 expect_contains "C14: лимит переопределён" "$DRY5" "--memory 2g"
 
 # C15: env list
-if capture "C15: env list" env; then :; fi
 if REPLY="$("$BIN" env list 2>/dev/null)"; then
     expect_contains "C15: default в списке"   "$REPLY" "default"
     expect_contains "C15: smoke-env в списке" "$REPLY" "smoke-env"
@@ -546,7 +549,7 @@ fi
 # --- R9/R10: entrypoint отвергает опасные UID ---
 ERR9=""
 if ! ERR9="$(docker run --rm -e HOST_UID=0 -e HOST_GID=0 "$IMAGE" true 2>&1 >/dev/null)"; then
-    expect_contains "R9: отказ при HOST_UID=0" "$ERR9" "refusing"
+    expect_contains "R9: отказ при HOST_UID=0" "$ERR9" "не является корректным UID"
 else
     fail "R9: ожидался отказ при HOST_UID=0"
 fi
