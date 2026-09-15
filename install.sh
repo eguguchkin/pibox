@@ -5,13 +5,14 @@
 # Разворачивает рабочую инсталляцию в PIBOX_DIR (по умолчанию ~/pibox):
 #   bin/pibox       CLI (копия run.sh)
 #   docker/         build-контекст (Dockerfile, entrypoint.sh, .dockerignore)
-#   env-template/   шаблон для новых окружений
+#   env/.template/  шаблон для новых окружений (имя с точкой — glob '*' его не матчит,
+#                   поэтому 'env list' и 'env remove' шаблон не видят)
 #   env/            окружения (default создаётся из шаблона)
-#   env/models.json конфиг моделей (копируется, если нет)
+#   models.json     конфиг моделей (копируется, если нет)
 #
 # Идемпотентность:
 #   - Повторный запуск без --force не перезаписывает существующие файлы
-#   - --force обновляет CLI, docker/, env-template/ (но НЕ env/*)
+#   - --force обновляет CLI, docker/, env/.template/ (но НЕ env/*)
 #   - env/default создаётся только если отсутствует
 #   - models.json копируется только если отсутствует (или с --force)
 #
@@ -203,7 +204,7 @@ check_sources() {
         "entrypoint.sh"
         ".dockerignore"
         "models.json"
-        "env-template/README.md"
+        "env/.template/README.md"
     )
 
     for file in "${required_files[@]}"; do
@@ -218,7 +219,7 @@ check_sources() {
 install() {
     local target_bin="$PIBOX_DIR/bin"
     local target_docker="$PIBOX_DIR/docker"
-    local target_env_template="$PIBOX_DIR/env-template"
+    local target_env_template="$PIBOX_DIR/env/.template"
     local target_env="$PIBOX_DIR/env"
     local target_models="$PIBOX_DIR/models.json"
 
@@ -250,16 +251,17 @@ install() {
         fi
     done
 
-    # 4. Копирование env-template
+    # 4. Шаблон окружения: копирование env/.template/
     if (( FORCE == 1 )); then
-        log "Обновляю env-template/"
+        log "Обновляю env/.template/"
         safe_rm_rf "$target_env_template"
         mkdir -p "$target_env_template"
-        cp -a "$SRC_DIR/env-template/." "$target_env_template/"
+        cp -a "$SRC_DIR/env/.template/." "$target_env_template/"
     else
         if [[ ! -d "$target_env_template/.pi" ]]; then
-            log "Копирую env-template/"
-            cp -a "$SRC_DIR/env-template/." "$target_env_template/"
+            log "Копирую env/.template/"
+            mkdir -p "$target_env_template"
+            cp -a "$SRC_DIR/env/.template/." "$target_env_template/"
         fi
     fi
 

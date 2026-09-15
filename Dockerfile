@@ -87,7 +87,7 @@ RUN userdel -r ubuntu 2>/dev/null || true; \
 
 
     
-# — fallback-дотфайлы (КОНТРАКТ с задачей 4: канонические — в env-template) —
+# — fallback-дотфайлы (КОНТРАКТ с задачей 4: канонические — в env/.template) —
 RUN cat >> /home/pi/.bashrc <<'BASHRC'
 
 # Тулчейны mise

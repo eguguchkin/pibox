@@ -124,7 +124,7 @@ merge_skel() {
     cp -rn "${SKEL_DIR}/." "${PI_HOME}/"
 
     # 3e. Чиним владельца ТОЛЬКО у root-owned файлов (только что скопированных).
-    #     Файлы из bind-mount (env-template) уже принадлежат хост-юзеру.
+    #     Файлы из bind-mount (env/.template) уже принадлежат хост-юзеру.
     find "$PI_HOME" -user 0 \
         -exec chown -h "${HOST_UID}:${HOST_GID}" {} + 2>/dev/null || true
 

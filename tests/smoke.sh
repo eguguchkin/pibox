@@ -578,8 +578,22 @@ expect_ok "R13: ping host.docker.internal (NET_RAW, file caps ping)" \
 if [ "$OFFLINE" = "1" ]; then
     skip "R14: доступ в интернет (--offline)"
 else
-    expect_ok "R14: доступ в интернет" \
-        docker_pibox "$ENV_CAPS" "$TEST_WS" -- curl -fsS -o /dev/null --max-time 20 https://example.com
+    # Целей несколько: DNS окружения может заворачивать отдельные домены
+    # (песочницы/корпоративные резолверы блокируют example.com, но не интернет).
+    # Считаем успехом, если отвечает хотя бы одна.
+    r14_ok=0
+    for r14_url in https://example.com https://www.google.com https://cloudflare.com; do
+        if docker_pibox "$ENV_CAPS" "$TEST_WS" -- \
+            curl -fsS -o /dev/null --max-time 20 "$r14_url"; then
+            r14_ok=1
+            break
+        fi
+    done
+    if [ "$r14_ok" = "1" ]; then
+        ok "R14: доступ в интернет"
+    else
+        fail "R14: доступ в интернет (пробовали example.com, google.com, cloudflare.com)"
+    fi
 fi
 
 # --- R15: capabilities ---

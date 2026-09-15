@@ -144,7 +144,7 @@ check_workspace_isolation() {
 
 # --- Управление окружениями -----------------------------------------------------
 
-# Создание окружения из env-template, если оно не существует
+# Создание окружения из шаблона env/.template, если оно не существует
 create_env() {
     local env_name="$1"
     local env_dir="$PIBOX_DIR/env/$env_name"
@@ -152,7 +152,7 @@ create_env() {
     if [[ ! -d "$env_dir" ]]; then
         log "Создаю окружение '$env_name' из шаблона..."
         mkdir -p "$env_dir"
-        cp -a "$PIBOX_DIR/env-template/." "$env_dir/"
+        cp -a "$PIBOX_DIR/env/.template/." "$env_dir/"
     fi
 }
 
@@ -467,6 +467,7 @@ cmd_env() {
                 die "env remove требует имя окружения"
             fi
             local env_name="$1"
+            validate_env_name "$env_name"
             if [[ "$env_name" == "default" ]]; then
                 die "Нельзя удалить default окружение"
             fi
