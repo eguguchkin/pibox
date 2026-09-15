@@ -61,6 +61,16 @@ if [ "$HOST_UID" -eq 0 ] || [ "$HOST_GID" -eq 0 ]; then
 fi
 
 # --- 2. Подстройка UID/GID пользователя pi -----------------------------------
+#
+# ДОГОВОР О ВЛАДЕЛЬЦЕ ФАЙЛОВ: весь /home/pi — bind-mount хоста, поэтому
+# ВСЕ файлы в нём считаются принадлежащими хост-юзеру (HOST_UID:HOST_GID).
+# pi всегда работает уже с финальными UID/GID (gosu после usermod), так что
+# созданные им файлы имеют правильного владельца по построению.
+# Рекурсивный chown home на каждом старте НЕ делаем: это обход десятков
+# тысяч файлов ради пустого результата. Владелец чинится ТОЛЬКО у файлов,
+# скопированных из skel (см. ensure_dotfiles).
+# Если env-каталог переносился между машинами с разным UID хоста — разовый
+# `chown -R` на хосте (вне контейнера).
 
 adjust_uid_gid() {
     local cur_uid cur_gid
@@ -72,23 +82,12 @@ adjust_uid_gid() {
     if [ "$cur_gid" != "$HOST_GID" ]; then
         log "adjusting GID of '${PI_GROUP}': ${cur_gid} -> ${HOST_GID}"
         groupmod -o -g "$HOST_GID" "$PI_GROUP"
-
-        # Чиним group-ownership файлов, созданных контейнером под старым GID.
-        # Файлы из bind-mount уже имеют правильный GID хоста — их не трогаем.
-        # find без -xdev: workspace — отдельный bind-mount внутри /home/pi.
-        find "$PI_HOME" -group "$cur_gid" \
-            -exec chown -h ":${HOST_GID}" {} + 2>/dev/null || true
     fi
 
     # 2b. UID
     if [ "$cur_uid" != "$HOST_UID" ]; then
         log "adjusting UID of '${PI_USER}': ${cur_uid} -> ${HOST_UID}"
         usermod -o -u "$HOST_UID" "$PI_USER"
-
-        # Чиним ownership файлов, созданных контейнером под старым UID.
-        # (сессии Pi, mise-тулчейны, npm-установки — всё, что pi создал ранее)
-        find "$PI_HOME" -user "$cur_uid" \
-            -exec chown -h "${HOST_UID}" {} + 2>/dev/null || true
     fi
 
     # 2c. Гарантия: сам каталог /home/pi принадлежит целевому UID:GID
@@ -158,6 +157,13 @@ ensure_dotfiles() {
             cp -rn "${SKEL_DIR}/." "${PI_HOME}/" 2>/dev/null || true
             # заглушки/слои могли только что создаться — не затираем,
             # cp -rn их не тронет (уже существуют)
+            # Владельца root чиним ТОЛЬКО у только что скопированного и
+            # ТОЛЬКО здесь (первый запуск env): других root-owned файлов
+            # entrypoint не создаёт, остальное — собственность хост-юзера.
+            # -xdev: workspace — отдельный bind-mount, entrypoint там
+            # ничего не создаёт, обходить его не нужно.
+            find "$PI_HOME" -xdev -user 0 \
+                -exec chown -h "${HOST_UID}:${HOST_GID}" {} + 2>/dev/null || true
         else
             warn "skel directory ${SKEL_DIR} not found, skipping merge"
         fi
@@ -165,11 +171,7 @@ ensure_dotfiles() {
         chown "${HOST_UID}:${HOST_GID}" "$marker"
     fi
 
-    # 3. Чиним владельца root-owned файлов (только что скопированных)
-    find "$PI_HOME" -user 0 \
-        -exec chown -h "${HOST_UID}:${HOST_GID}" {} + 2>/dev/null || true
-
-    # 4. Гарантия: сам каталог /home/pi принадлежит целевому UID:GID
+    # 3. Гарантия: сам каталог /home/pi принадлежит целевому UID:GID
     chown "${HOST_UID}:${HOST_GID}" "$PI_HOME"
 }
 
