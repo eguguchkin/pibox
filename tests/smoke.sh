@@ -56,27 +56,51 @@ EOF
 
 while [ $# -gt 0 ]; do
     case "$1" in
-        --offline) OFFLINE=1 ;;
-        --keep)    KEEP=1 ;;
-        --rebuild) REBUILD=1 ;;
-        -h|--help) usage; exit 0 ;;
-        *) printf 'smoke: error: неизвестная опция: %s\n' "$1" >&2; exit 1 ;;
+    --offline) OFFLINE=1 ;;
+    --keep) KEEP=1 ;;
+    --rebuild) REBUILD=1 ;;
+    -h | --help)
+        usage
+        exit 0
+        ;;
+    *)
+        printf 'smoke: error: неизвестная опция: %s\n' "$1" >&2
+        exit 1
+        ;;
     esac
     shift
 done
 
 # --- Счётчики и вывод --------------------------------------------------------
 
-PASS=0; FAIL=0; SKIP=0; KNOWN=0
+PASS=0
+FAIL=0
+SKIP=0
+KNOWN=0
 
-ok()    { PASS=$((PASS + 1)); printf '  PASS  %s\n' "$*"; }
-fail()  { FAIL=$((FAIL + 1)); printf '  FAIL  %s\n' "$*" >&2; }
-skip()  { SKIP=$((SKIP + 1)); printf '  SKIP  %s\n' "$*"; }
-known() { KNOWN=$((KNOWN + 1)); printf '  KNOWN %s\n' "$*"; }
+ok() {
+    PASS=$((PASS + 1))
+    printf '  PASS  %s\n' "$*"
+}
+fail() {
+    FAIL=$((FAIL + 1))
+    printf '  FAIL  %s\n' "$*" >&2
+}
+skip() {
+    SKIP=$((SKIP + 1))
+    printf '  SKIP  %s\n' "$*"
+}
+known() {
+    KNOWN=$((KNOWN + 1))
+    printf '  KNOWN %s\n' "$*"
+}
 
 group() { printf '\n==> %s\n' "$*"; }
-log()   { printf '       %s\n' "$*" >&2; }
-die()   { printf 'smoke: error: %s\n' "$*" >&2; exit 1; }
+log() { printf '       %s\n' "$*" >&2; }
+die() {
+    printf 'smoke: error: %s\n' "$*" >&2
+    exit 1
+}
 
 # --- Пути ---------------------------------------------------------------------
 
@@ -123,7 +147,7 @@ file_owner() { # file_owner PATH -> uid
 
 has_bit() { # has_bit HEXVALUE BITNUM
     [ -n "$1" ] || return 1
-    [ $(( 0x$1 & (2 ** $2) )) -ne 0 ]
+    [ $((0x$1 & (2 ** $2))) -ne 0 ]
 }
 
 # --- Хелперы проверок ----------------------------------------------------------
@@ -145,12 +169,14 @@ expect_contains() { # NAME HAYSTACK NEEDLE (поиск подстроки, grep 
 }
 
 expect_ok() { # NAME CMD...
-    local name="$1"; shift
+    local name="$1"
+    shift
     if "$@" >/dev/null 2>&1; then ok "$name"; else fail "$name"; fi
 }
 
 expect_fail() { # NAME CMD... (ожидается ненулевой exit)
-    local name="$1"; shift
+    local name="$1"
+    shift
     if "$@" >/dev/null 2>&1; then
         fail "$name — ожидался ненулевой код выхода"
     else
@@ -196,7 +222,8 @@ docker_pibox() {
 
 # CLI-хелпер: запуск pibox в указанном каталоге, ожидается ошибка
 cli_fails_in() { # NAME DIR ARGS...
-    local name="$1" dir="$2"; shift 2
+    local name="$1" dir="$2"
+    shift 2
     if (cd "$dir" && "$BIN" "$@" >/dev/null 2>&1); then
         fail "$name — ожидалась ошибка"
     else
@@ -215,7 +242,7 @@ if [ "$(id -u)" -eq 0 ]; then
 fi
 
 # [bash3.2] Минимальная требуемая версия — 3.2 (работает и на дефолтном macOS bash).
-if [ "$(( BASH_VERSINFO[0] * 100 + BASH_VERSINFO[1] ))" -lt 302 ]; then
+if [ "$((BASH_VERSINFO[0] * 100 + BASH_VERSINFO[1]))" -lt 302 ]; then
     die "требуется bash >= 3.2 (найдено ${BASH_VERSION})"
 fi
 
@@ -264,8 +291,8 @@ if [ -x "$BIN" ]; then ok "I4: bin/pibox исполняемый"; else fail "I4:
 # ВСЕГДА, models.json и env/* не трогаются
 touch -t 202001010000 "$BIN"
 OLD_BIN_MTIME="$(file_mtime "$BIN")"
-echo "// smoke-sentinel" >> "$TEST_PIBOX/models.json"
-echo "// smoke-sentinel" >> "$TEST_PIBOX/docker/Dockerfile"
+echo "// smoke-sentinel" >>"$TEST_PIBOX/models.json"
+echo "// smoke-sentinel" >>"$TEST_PIBOX/docker/Dockerfile"
 
 if "$SRC_DIR/install.sh" --dir "$TEST_PIBOX" --no-path --src "$SRC_DIR" >/dev/null 2>&1; then
     ok "I5: повторная установка (без --force) прошла"
@@ -290,7 +317,7 @@ fi
 
 # I6: --force удаляет ВСЕ окружения (env/*), default пересоздаётся из
 # шаблона; models.json не трогается даже при --force
-echo keepme > "$TEST_PIBOX/env/default/.smoke-sentinel"
+echo keepme >"$TEST_PIBOX/env/default/.smoke-sentinel"
 touch -t 202001010000 "$BIN"
 OLD_BIN_MTIME="$(file_mtime "$BIN")"
 
@@ -344,10 +371,10 @@ if [ "$NEED_BUILD" = "1" ]; then
 fi
 ok "B0: образ ${IMAGE} доступен"
 
-expect_ok "B1: pi --version"          docker run --rm "$IMAGE" pi --version
-expect_ok "B2: mise --version"        docker run --rm "$IMAGE" mise --version
-expect_ok "B2: node --version"        docker run --rm "$IMAGE" node --version
-expect_ok "B2: npm --version"         docker run --rm "$IMAGE" npm --version
+expect_ok "B1: pi --version" docker run --rm "$IMAGE" pi --version
+expect_ok "B2: mise --version" docker run --rm "$IMAGE" mise --version
+expect_ok "B2: node --version" docker run --rm "$IMAGE" node --version
+expect_ok "B2: npm --version" docker run --rm "$IMAGE" npm --version
 expect_ok "B3: инструменты глобально в PATH" docker run --rm "$IMAGE" \
     bash -c 'command -v pi node npm mise gosu tini jq yq rg xxd git python3'
 expect_ok "B4: тяжёлых тулчейнов в образе нет" docker run --rm "$IMAGE" \
@@ -362,9 +389,9 @@ expect_ok "B5: пользователь pi (uid 1000) и /opt/skel" docker run -
 group "Фаза 3: CLI pibox (dry-run)"
 
 mkdir -p "$TEST_WS"
-echo "probe-content" > "$TEST_WS/probe.txt"
+echo "probe-content" >"$TEST_WS/probe.txt"
 
-expect_ok "C1: pibox --help"    "$BIN" --help
+expect_ok "C1: pibox --help" "$BIN" --help
 capture_eq "C2: pibox --version" "pibox 0.1.0" "$BIN" --version
 
 # C3: dry-run по умолчанию + содержимое команды
@@ -374,16 +401,16 @@ if DRY="$(cd "$TEST_WS" && "$BIN" --dry-run 2>/dev/null)"; then
 else
     fail "C3: pibox --dry-run завершился с ошибкой"
 fi
-expect_contains "C4: host-gateway в команде"    "$DRY" "--add-host host.docker.internal:host-gateway"
-expect_contains "C5: --cap-add SYS_PTRACE"      "$DRY" "--cap-add SYS_PTRACE"
-expect_contains "C5: --cap-add NET_RAW"         "$DRY" "--cap-add NET_RAW"
-expect_contains "C6: --memory (дефолт)"         "$DRY" "--memory 4g"
-expect_contains "C6: --cpus (дефолт)"           "$DRY" "--cpus 2"
-expect_contains "C6: --pids-limit (дефолт)"     "$DRY" "--pids-limit 512"
-expect_contains "C7: mount окружения"           "$DRY" "-v $TEST_PIBOX/env/default:/home/pi"
-expect_contains "C8: mount workspace"           "$DRY" "-v $TEST_WS:/home/pi/workspace"
-expect_contains "C9: HOST_UID передаётся"       "$DRY" "-e HOST_UID=$HOST_UID"
-expect_contains "C9: HOST_GID передаётся"       "$DRY" "-e HOST_GID=$HOST_GID"
+expect_contains "C4: host-gateway в команде" "$DRY" "--add-host host.docker.internal:host-gateway"
+expect_contains "C5: --cap-add SYS_PTRACE" "$DRY" "--cap-add SYS_PTRACE"
+expect_contains "C5: --cap-add NET_RAW" "$DRY" "--cap-add NET_RAW"
+expect_contains "C6: --memory (дефолт)" "$DRY" "--memory 4g"
+expect_contains "C6: --cpus (дефолт)" "$DRY" "--cpus 2"
+expect_contains "C6: --pids-limit (дефолт)" "$DRY" "--pids-limit 512"
+expect_contains "C7: mount окружения" "$DRY" "-v $TEST_PIBOX/env/default:/home/pi"
+expect_contains "C8: mount workspace" "$DRY" "-v $TEST_WS:/home/pi/workspace"
+expect_contains "C9: HOST_UID передаётся" "$DRY" "-e HOST_UID=$HOST_UID"
+expect_contains "C9: HOST_GID передаётся" "$DRY" "-e HOST_GID=$HOST_GID"
 if [ -f "$TEST_PIBOX/env/default/.pi/agent/models.json" ]; then
     ok "C3: models.json скопирован в default при первом dry-run"
 else
@@ -428,17 +455,17 @@ if DRY3="$(cd "$TEST_WS" && env SMOKE_VAR=smoke-value "$BIN" --dry-run -p 28111:
 else
     fail "C12: dry-run с -p/-E завершился с ошибкой"
 fi
-expect_contains "C12: проброс порта в команде"  "$DRY3" "-p 28111:8080"
-expect_contains "C12: проброс переменной"       "$DRY3" "-e SMOKE_VAR"
+expect_contains "C12: проброс порта в команде" "$DRY3" "-p 28111:8080"
+expect_contains "C12: проброс переменной" "$DRY3" "-e SMOKE_VAR"
 
-# C13: --git-safe 
+# C13: --git-safe
 DRY4=""
 if DRY4="$(cd "$TEST_WS" && "$BIN" --dry-run --git-safe 2>/dev/null)"; then
     ok "C13: dry-run с --git-safe"
 else
     fail "C13: dry-run с флагами завершился с ошибкой"
 fi
-expect_contains "C13: PIBOX_GIT_SAFE=1"    "$DRY4" "PIBOX_GIT_SAFE=1"
+expect_contains "C13: PIBOX_GIT_SAFE=1" "$DRY4" "PIBOX_GIT_SAFE=1"
 
 # C14: переопределение лимитов
 DRY5=""
@@ -451,7 +478,7 @@ expect_contains "C14: лимит переопределён" "$DRY5" "--memory 2
 
 # C15: env list
 if REPLY="$("$BIN" env list 2>/dev/null)"; then
-    expect_contains "C15: default в списке"   "$REPLY" "default"
+    expect_contains "C15: default в списке" "$REPLY" "default"
     expect_contains "C15: smoke-env в списке" "$REPLY" "smoke-env"
 else
     fail "C15: env list завершился с ошибкой"
@@ -464,6 +491,122 @@ expect_ok "C16: env remove" "$BIN" env remove smoke-env2
 if [ ! -d "$TEST_PIBOX/env/smoke-env2" ]; then ok "C16: каталог удалён"; else fail "C16: каталог не удалён"; fi
 expect_fail "C16: env remove default запрещён" "$BIN" env remove default
 
+# C19: pibox doctor — D1/D2 через docker shim, D4-D8 работают с файлами
+# тестового каталога (D3/D7 с живым докером — вне скоупа smoke-тестов)
+DOCTOR_RC=0
+DOCTOR_OUT="$(cd "$TEST_WS" && "$BIN" doctor 2>/dev/null)" || DOCTOR_RC=$?
+if [ "$DOCTOR_RC" -eq 0 ]; then
+    ok "C19: pibox doctor (по умолчанию) завершается с кодом 0"
+else
+    fail "C19: pibox doctor завершился с кодом $DOCTOR_RC"
+fi
+if printf '%s' "$DOCTOR_OUT" | grep -Eq '\[OK\][[:space:]]+docker [0-9]'; then
+    ok "C19: docker найден (D1)"
+else
+    fail "C19: docker найден (D1) — в выводе нет строки о версии docker"
+fi
+expect_contains "C19: образ найден (D2)" "$DOCTOR_OUT" "образ pibox:latest найден"
+expect_contains "C19: окружение default на месте (D4)" "$DOCTOR_OUT" "окружение 'default':"
+expect_contains "C19: каркас env на месте (D5)" "$DOCTOR_OUT" ".pi/agent/models.json"
+expect_contains "C19: расширения отсутствуют — INFO (D6)" "$DOCTOR_OUT" "расширения не установлены"
+
+# C19: --fix чинит сломанный каркас (D5)
+rm "$TEST_PIBOX/env/default/.pi/agent/models.json"
+DOCTOR_FIX_RC=0
+DOCTOR_FIX_OUT="$(cd "$TEST_WS" && "$BIN" doctor -e default --fix 2>/dev/null)" || DOCTOR_FIX_RC=$?
+if [ "$DOCTOR_FIX_RC" -eq 0 ]; then ok "C19: doctor --fix прошёл"; else fail "C19: doctor --fix упал (rc=$DOCTOR_FIX_RC)"; fi
+if [ -f "$TEST_PIBOX/env/default/.pi/agent/models.json" ]; then ok "C19: models.json восстановлен --fix'ом"; else fail "C19: models.json не восстановлен"; fi
+expect_contains "C19: --fix сообщает о восстановлении" "$DOCTOR_FIX_OUT" "восстановлен (--fix)"
+# C11 затрагивал mtime models.json — после --fix он уже неважен, повторный dry-run дальше идёт мимо
+
+# C19: doctor без рабочего docker — падает (фейковый docker, который всегда ошибается)
+FAKEBIN="$TEST_ROOT/fakebin"
+mkdir -p "$FAKEBIN"
+printf '#!/bin/sh\nexit 1\n' >"$FAKEBIN/docker"
+chmod +x "$FAKEBIN/docker"
+PATH="$FAKEBIN:$PATH" "$BIN" doctor >/dev/null 2>&1 &&
+    { fail "C19: doctor без docker должен падать"; } ||
+    ok "C19: doctor без docker падает"
+
+# C19: doctor на отсутствующем окружении
+if (cd "$TEST_WS" && "$BIN" doctor -e no-such-env >/dev/null 2>&1); then
+    fail "C19: doctor -e no-such-env должен падать"
+else
+    ok "C19: doctor -e no-such-env падает"
+fi
+
+# C19: платформенные дубли (D6) — чистка --fix'ом с правилом gnu-твина.
+# Архитектурно-независимо: GOOD_ARCH/BAD_ARCH вычисляются от хоста,
+# как в run.sh (container arch = host arch, libc всегда gnu).
+NM="$TEST_PIBOX/env/smoke-env/.pi/agent/npm/node_modules"
+case "$(uname -m)" in
+x86_64 | amd64)
+    GOOD_ARCH="x64"
+    BAD_ARCH="arm64"
+    ;;
+aarch64 | arm64)
+    GOOD_ARCH="arm64"
+    BAD_ARCH="x64"
+    ;;
+*) GOOD_ARCH="" ;;
+esac
+if [ -z "$GOOD_ARCH" ]; then
+    skip "C19: платформенные дубли — неизвестная архитектура хоста $(uname -m)"
+else
+    # junk с живым твином, darwin-пакеты (мёртвые всегда), junk без твина
+    mkdir -p "$NM/@scope/pkg-linux-$GOOD_ARCH-gnu" "$NM/@scope/pkg-linux-$GOOD_ARCH-musl" \
+        "$NM/@other/pkg-darwin-arm64" "$NM/pkg-darwin-x64" \
+        "$NM/@wrongarch/wrong-arch-linux-$BAD_ARCH-gnu"
+    # известный случай liteparse: чужой-arch .node в основном пакете при живом платформенном
+    mkdir -p "$NM/@llamaindex/liteparse" "$NM/@llamaindex/liteparse-linux-$GOOD_ARCH-gnu"
+    head -c 307200 /dev/zero >"$NM/@scope/pkg-linux-$GOOD_ARCH-musl/blob.bin"
+    # Файл .node должен опознаваться file(1) как ELF — сажаем минимальный заголовок
+    # (e_ident + e_type + e_machine), иначе doctor честно пропустит «data».
+    FAKE_ELF='\x7fELF\x02\x01\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00'
+    case "$BAD_ARCH" in
+    x64) FAKE_ELF="$FAKE_ELF\x01\x00\x3e\x00" ;;   # e_machine 62 = x86-64
+    arm64) FAKE_ELF="$FAKE_ELF\x01\x00\xb7\x00" ;; # e_machine 183 = aarch64
+    esac
+    printf '%b' "$FAKE_ELF" >"$NM/@llamaindex/liteparse/liteparse.linux-$BAD_ARCH-gnu.node"
+    head -c 307200 /dev/zero >>"$NM/@llamaindex/liteparse/liteparse.linux-$BAD_ARCH-gnu.node"
+
+    DOCTOR_JUNK_RC=0
+    DOCTOR_JUNK_OUT="$(cd "$TEST_WS" && "$BIN" doctor -e smoke-env 2>/dev/null)" || DOCTOR_JUNK_RC=$?
+    if [ "$DOCTOR_JUNK_RC" -eq 0 ]; then
+        ok "C19: doctor с дублями завершается с кодом 0 (warnings не влияют)"
+    else
+        fail "C19: doctor с дублями завершился с кодом $DOCTOR_JUNK_RC (ожидался 0)"
+    fi
+    expect_contains "C19: дубль обнаружен (musl)" "$DOCTOR_JUNK_OUT" "pkg-linux-$GOOD_ARCH-musl"
+    expect_contains "C19: дубль обнаружен (darwin)" "$DOCTOR_JUNK_OUT" "pkg-darwin-arm64"
+    expect_contains "C19: чужой-arch .node обнаружен" "$DOCTOR_JUNK_OUT" "liteparse.linux-$BAD_ARCH-gnu.node"
+    expect_contains "C19: wrong-arch без твина — предупреждение" "$DOCTOR_JUNK_OUT" "без рабочего твина"
+    expect_contains "C19: итого мусора" "$DOCTOR_JUNK_OUT" "итого мусора"
+
+    DOCTOR_JUNK_FIX_RC=0
+    DOCTOR_JUNK_FIX_OUT="$(cd "$TEST_WS" && "$BIN" doctor -e smoke-env --fix 2>/dev/null)" || DOCTOR_JUNK_FIX_RC=$?
+    if [ "$DOCTOR_JUNK_FIX_RC" -eq 0 ]; then
+        ok "C19: doctor --fix (дубли) прошёл"
+    else
+        fail "C19: doctor --fix (дубли) упал (rc=$DOCTOR_JUNK_FIX_RC)"
+    fi
+    expect_contains "C19: --fix удаляет дубль" "$DOCTOR_JUNK_FIX_OUT" "дубль удалён (--fix)"
+    expect_contains "C19: --fix удаляет чужой-arch" "$DOCTOR_JUNK_FIX_OUT" "чужой-arch артефакт удалён (--fix)"
+    if [ ! -d "$NM/@scope/pkg-linux-$GOOD_ARCH-musl" ]; then ok "C19: musl-дубль удалён"; else fail "C19: musl-дубль не удалён"; fi
+    if [ ! -d "$NM/@other/pkg-darwin-arm64" ]; then ok "C19: darwin-дубль удалён"; else fail "C19: darwin-дубль не удалён"; fi
+    if [ ! -d "$NM/pkg-darwin-x64" ]; then ok "C19: plain darwin-дубль удалён"; else fail "C19: plain darwin-дубль не удалён"; fi
+    if [ ! -f "$NM/@llamaindex/liteparse/liteparse.linux-$BAD_ARCH-gnu.node" ]; then ok "C19: чужой-arch .node удалён"; else fail "C19: чужой-arch .node не удалён"; fi
+    if [ -d "$NM/@scope/pkg-linux-$GOOD_ARCH-gnu" ]; then ok "C19: gnu-твин не тронут"; else fail "C19: gnu-твин удалён"; fi
+    if [ -e "$NM/@wrongarch/wrong-arch-linux-$BAD_ARCH-gnu" ]; then
+        ok "C19: wrong-arch без твина не тронут"
+    else
+        fail "C19: wrong-arch без твина был удалён"
+    fi
+    expect_contains "C19: безтвиновое предупреждение остаётся" "$DOCTOR_JUNK_FIX_OUT" "без рабочего твина"
+    # мусор из C19 не утекает в дальнейшие фазы
+    rm -rf "$NM/@scope" "$NM/@other" "$NM/@wrongarch" "$NM/pkg-darwin-x64" "$NM/@llamaindex"
+fi
+
 # C17: изоляция workspace и PIBOX_DIR
 isolation_check() { # NAME DIR NEEDLE
     local name="$1" dir="$2" needle="$3" out=""
@@ -473,12 +616,12 @@ isolation_check() { # NAME DIR NEEDLE
         expect_contains "$name" "$out" "$needle"
     fi
 }
-isolation_check "C17: workspace = PIBOX_DIR"        "$TEST_PIBOX"     "PIBOX_DIR"
-isolation_check "C17: workspace внутри PIBOX_DIR"   "$TEST_PIBOX/env" "PIBOX_DIR"
-isolation_check "C17: PIBOX_DIR внутри workspace"   "$TEST_ROOT"      "PIBOX_DIR"
+isolation_check "C17: workspace = PIBOX_DIR" "$TEST_PIBOX" "PIBOX_DIR"
+isolation_check "C17: workspace внутри PIBOX_DIR" "$TEST_PIBOX/env" "PIBOX_DIR"
+isolation_check "C17: PIBOX_DIR внутри workspace" "$TEST_ROOT" "PIBOX_DIR"
 
 # C18: недопустимые имена окружений
-cli_fails_in "C18: имя '../evil' отклоняется"  "$TEST_WS" --dry-run -e "../evil"
+cli_fails_in "C18: имя '../evil' отклоняется" "$TEST_WS" --dry-run -e "../evil"
 cli_fails_in "C18: имя с пробелом отклоняется" "$TEST_WS" --dry-run -e "bad name"
 
 # ============================================================================
@@ -527,7 +670,7 @@ expect_eq "R5: заглушка принадлежит хост-пользова
 expect_eq "R5: .bash_logout принадлежит хост-пользователю" "$HOST_UID" "$(file_owner "$ENV_FRESH/.bash_logout")"
 
 # --- R6: пользовательский .bashrc не теряется, а мигрирует в .user ---
-printf '%s\n' '# smoke user bashrc' > "$ENV_USER/.bashrc"
+printf '%s\n' '# smoke user bashrc' >"$ENV_USER/.bashrc"
 expect_ok "R6: запуск с пользовательским .bashrc" docker_pibox "$ENV_USER" "$TEST_WS" -- true
 if grep -qF 'smoke user bashrc' "$ENV_USER/.bashrc.user"; then
     ok "R6: пользовательский .bashrc мигрирован в .bashrc.user"
@@ -563,7 +706,7 @@ capture_eq "R11: PIBOX_GIT_SAFE=1 экспортирует GIT_CONFIG_*" "1|*" \
     bash -c 'printf "%s|%s" "$GIT_CONFIG_COUNT" "$GIT_CONFIG_VALUE_0"'
 if command -v git >/dev/null 2>&1; then
     git init -q "$TEST_WS/gitrepo" 2>/dev/null || true
-    echo hi > "$TEST_WS/gitrepo/file.txt"
+    echo hi >"$TEST_WS/gitrepo/file.txt"
 
     expect_ok "R11: git status в workspace (репо с хоста, safe.directory)" \
         docker_pibox "$ENV_UID" "$TEST_WS" -e PIBOX_GIT_SAFE=1 -- \
@@ -588,7 +731,7 @@ else
     r14_ok=0
     for r14_url in https://example.com https://www.google.com https://cloudflare.com; do
         if docker_pibox "$ENV_CAPS" "$TEST_WS" -- \
-            curl -fsS -o /dev/null --max-time 20 "$r14_url"; then
+            curl -fsS -o /dev/null --max-time 20 "$r14_url" >/dev/null 2>&1; then
             r14_ok=1
             break
         fi
@@ -664,10 +807,10 @@ docker rm -f "$LIMITS_NAME" >/dev/null 2>&1 || true
 
 # --- R18: проброс портов ---
 # Внутренний порт 8080 (>1024): pi не имеет CAP_NET_BIND_SERVICE после gosu.
-PORT=$(( (RANDOM % 20000) + 20000 ))
+PORT=$(((RANDOM % 20000) + 20000))
 PORT_NAME="pibox-smoke-port"
 CLEANUP_CONTAINERS+=("$PORT_NAME")
-echo "smoke-port-ok" > "$TEST_WS/port-probe.txt"
+echo "smoke-port-ok" >"$TEST_WS/port-probe.txt"
 if docker run -d --rm --name "$PORT_NAME" \
     -p "${PORT}:8080" \
     --add-host host.docker.internal:host-gateway \
@@ -707,8 +850,8 @@ fi
 group "Итог"
 printf '\n'
 printf '  PASS: %d\n' "$PASS"
-if [ "$FAIL" -gt 0 ];  then printf '  FAIL: %d\n' "$FAIL"; fi
-if [ "$SKIP" -gt 0 ];  then printf '  SKIP: %d\n' "$SKIP"; fi
+if [ "$FAIL" -gt 0 ]; then printf '  FAIL: %d\n' "$FAIL"; fi
+if [ "$SKIP" -gt 0 ]; then printf '  SKIP: %d\n' "$SKIP"; fi
 if [ "$KNOWN" -gt 0 ]; then printf '  KNOWN-ISSUE: %d (не влияет на результат)\n' "$KNOWN"; fi
 
 if [ "$FAIL" -gt 0 ]; then

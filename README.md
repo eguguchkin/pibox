@@ -273,7 +273,7 @@ php -v; go version           # переживают перезапуск кон�
 
 ```
 pibox/
-├── Dockerfile          # multi-stage: ubuntu 24.04 + node 22 + pi + mise
+├── Dockerfile          # multi-stage: ubuntu 24.04 + node 24 + pi + mise
 ├── entrypoint.sh       # UID/GID, dotfiles-слои, gosu→tini→pi
 ├── run.sh              # исходник CLI (после install — ~/pibox/bin/pibox)
 ├── install.sh          # установщик

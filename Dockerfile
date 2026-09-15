@@ -17,7 +17,7 @@
 # ============================================================================
 
 ARG UBUNTU_VERSION=24.04
-ARG NODE_IMAGE=node:22-bookworm-slim
+ARG NODE_IMAGE=node:24-bookworm-slim
 ARG PI_VERSION=0.85.1
 
 # ── Stage 1: builder — node + npm + pi в /usr/local ─────────────────────────
@@ -45,6 +45,15 @@ LABEL org.opencontainers.image.title="pibox" \
 # НЕ ставим через apt: nodejs/npm (приходят из builder — иначе два
 # конфликтующих node); cat/find/xargs (уже в coreutils/findutils базового
 # образа); тяжёлые тулчейны (инвариант №4).
+#
+# РАНТАЙМ-ЗАВИСИМОСТИ PI-РАСШИРЕНИЙ (не тулчейны для агента — инвариант №4
+# не задет, через mise их не поставить; шарятся всеми окружениями):
+#   default-jre-headless        — рантайм для recheck.jar (pi-mcp-adapter,
+#                                 аудит RegEx от MCP-серверов); без java
+#                                 recheck работает на медленном JS-фолбэке
+#   tesseract-ocr + eng/rus     — встроенный OCR для pi-docparser
+#                                 (document_parse: ocrLanguage/tessdataPath);
+#                                 поставить в рантайме нельзя (apt/sudo нет)
 RUN apt-get update \
  && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
       ca-certificates locales tzdata lsb-release gosu tini \
@@ -53,6 +62,8 @@ RUN apt-get update \
       git tar gzip unzip zip rsync bzip2 xz-utils zstd lz4 \
       python3 python3-pip python3-venv \
       jq ripgrep yq vim htop ncdu hexedit \
+      default-jre-headless \
+      tesseract-ocr tesseract-ocr-eng tesseract-ocr-rus \
  && rm -rf /var/lib/apt/lists/*
 # Примечания: hexedit/ncdu/yq — из universe (в docker-образе Ubuntu он
 # включён). yq из apt — Python-обёртка над jq, НЕ Go-yq (mikefarah),

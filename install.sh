@@ -244,18 +244,21 @@ install() {
         cp "$SRC_DIR/$file" "$target_docker/"
     done
 
-    # 4. Шаблон окружения — всегда свежий из исходников
-    log "Обновляю env/.template/"
-    safe_rm_rf "$target_env_template"
-    mkdir -p "$target_env_template"
-    cp -a "$SRC_DIR/env/.template/." "$target_env_template/"
-
-    # 5. --force: удалить ВСЕ окружения (env/*). Без --force не трогаем.
+    # 4. --force: удалить ВСЕ окружения (env/*). Без --force не трогаем.
+    #    ВАЖНО: строго ДО обновления env/.template — зачистка сносит весь env/,
+    #    включая шаблон; если делать наоборот, шаг 6 упадёт с «cp: cannot stat
+    #    .../env/.template/.» (env/default останется пустым, CLI-тесты красные).
     if (( FORCE == 1 )); then
         warn "--force: удаляю ВСЕ окружения в ${target_env} (включая default)"
         safe_rm_rf "$target_env"
     fi
     mkdir -p "$target_env"
+
+    # 5. Шаблон окружения — всегда свежий из исходников
+    log "Обновляю env/.template/"
+    safe_rm_rf "$target_env_template"
+    mkdir -p "$target_env_template"
+    cp -a "$SRC_DIR/env/.template/." "$target_env_template/"
 
     # 6. Создание default окружения (если не существует)
     if [[ ! -d "$target_env/default" ]]; then
