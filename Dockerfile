@@ -41,7 +41,7 @@ LABEL org.opencontainers.image.title="pibox" \
       org.opencontainers.image.version="${PI_VERSION}+pibox" \
       org.opencontainers.image.base.name="docker.io/library/ubuntu:${UBUNTU_VERSION}"
 
-# — apt: базовый набор (сверен с docs/NOTES.md, задача 1) —
+# — apt: базовый набор —
 # НЕ ставим через apt: nodejs/npm (приходят из builder — иначе два
 # конфликтующих node); cat/find/xargs (уже в coreutils/findutils базового
 # образа); тяжёлые тулчейны (инвариант №4).
@@ -56,7 +56,7 @@ RUN apt-get update \
  && rm -rf /var/lib/apt/lists/*
 # Примечания: hexedit/ncdu/yq — из universe (в docker-образе Ubuntu он
 # включён). yq из apt — Python-обёртка над jq, НЕ Go-yq (mikefarah),
-# синтаксис отличается — см. docs/NOTES.md.
+# синтаксис отличается.
 
 # — locale —
 RUN locale-gen en_US.UTF-8 && update-locale LANG=en_US.UTF-8
@@ -88,7 +88,12 @@ RUN userdel -r ubuntu 2>/dev/null || true; \
 
     
 # — fallback-дотфайлы (КОНТРАКТ с задачей 4: канонические — в env/.template) —
-RUN cat >> /home/pi/.bashrc <<'BASHRC'
+# СЛОЁНАЯ СХЕМА — skel здесь единственный источник правды:
+#   .bashrc        — заглушка с маркером PIBOX_SKELETON_V1 (правки — в ~/.bashrc.user)
+#   .bashrc.pibox  — сток: базовый Ubuntu bashrc + добавки pibox (mise, prompt)
+# .profile/.profile.pibox — аналогично. Entrypoint синхронизирует оба слоя в home
+# (cmp-проверка) и мигрирует наследие в .<f>.user; ничего не генерирует сам.
+RUN cat >> /home/pi/.bashrc.pibox <<'BASHRC'
 
 # Тулчейны mise
 if command -v mise >/dev/null 2>&1; then
@@ -98,6 +103,28 @@ fi
 # Цветной prompt pibox
 export PS1='\[\e[31m\](pibox)\[\e[0m\] \[\e[34m\]\u@\h\[\e[0m\]:\[\e[32m\]\w\[\e[0m\]\$ '
 BASHRC
+
+# Слой .bashrc.pibox начинается со стокового /etc/skel/.bashrc
+RUN cat /etc/skel/.bashrc /home/pi/.bashrc.pibox > /home/pi/.bashrc.pibox.new \
+ && mv /home/pi/.bashrc.pibox.new /home/pi/.bashrc.pibox
+
+# Заглушки (источник правды для entrypoint) и .profile.pibox (стоковый профиль)
+RUN cp /etc/skel/.profile /home/pi/.profile.pibox
+
+RUN cat > /home/pi/.bashrc <<'STUB'
+# ~/.bashrc — pibox managed stub. Правки — в ~/.bashrc.user
+# PIBOX_SKELETON_V1
+case $- in *i*) ;; *) return;; esac
+[ -r "$HOME/.bashrc.pibox" ] && . "$HOME/.bashrc.pibox"
+[ -r "$HOME/.bashrc.user" ] && . "$HOME/.bashrc.user"
+STUB
+
+RUN cat > /home/pi/.profile <<'STUB'
+# ~/.profile — pibox managed stub. Правки — в ~/.profile.user
+# PIBOX_SKELETON_V1
+[ -r "$HOME/.profile.pibox" ] && . "$HOME/.profile.pibox"
+[ -r "$HOME/.profile.user" ] && . "$HOME/.profile.user"
+STUB
 
 # — эталонный home: снимок ДО создания workspace (WORKDIR ниже) —
 # Владелец /opt/skel не важен: merge в entrypoint выполняется от root,

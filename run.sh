@@ -18,7 +18,6 @@
 #       --memory LIMIT     лимит памяти (напр. 4g)
 #       --cpus N           лимит CPU
 #       --pids-limit N     лимит процессов
-#       --resync-skel      повторный merge /opt/skel в home
 #       --git-safe         git safe.directory для workspace
 #       --keep             оставить контейнер после выхода (для отладки)
 #       --dry-run          напечатать команду docker run и выйти
@@ -27,7 +26,7 @@
 #   -V, --version          версия
 #
 # Контракт с entrypoint.sh (задача 5):
-#   Передаёт HOST_UID, HOST_GID, PIBOX_GIT_SAFE, PIBOX_RESYNC_SKEL через -e
+#   Передаёт HOST_UID, HOST_GID, PIBOX_GIT_SAFE через -e
 # ============================================================================
 
 set -euo pipefail
@@ -82,7 +81,6 @@ pibox — запуск Pi Coding Agent в изолированном Docker-ко
         --memory LIMIT         лимит памяти (напр. 4g)
         --cpus N               лимит CPU
         --pids-limit N         лимит процессов
-        --resync-skel          повторный merge /opt/skel в home
         --git-safe             git safe.directory для workspace
         --keep                 оставить контейнер после выхода (для отладки)
         --dry-run              напечатать команду docker run и выйти
@@ -208,7 +206,6 @@ build_docker_run_cmd() {
     RUN_CMD+=("-e" "HOST_UID=$(id -u)")
     RUN_CMD+=("-e" "HOST_GID=$(id -g)")
     RUN_CMD+=("-e" "PIBOX_GIT_SAFE=${GIT_SAFE:-0}")
-    RUN_CMD+=("-e" "PIBOX_RESYNC_SKEL=${RESYNC_SKEL:-0}")
 
     # Монтирования
     RUN_CMD+=("-v" "$PIBOX_DIR/env/$ENV_NAME:/home/pi")
@@ -317,10 +314,6 @@ cmd_run() {
                 [[ $# -ge 2 ]] || die "Опция $1 требует аргумент"
                 PIDS_LIMIT="$2"
                 shift 2
-                ;;
-            --resync-skel)
-                RESYNC_SKEL=1
-                shift
                 ;;
             --git-safe)
                 GIT_SAFE=1

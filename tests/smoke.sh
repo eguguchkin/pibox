@@ -25,7 +25,7 @@
 # работать с HOST_UID=0.
 #
 # Выход: 0 — все проверки пройдены, 1 — есть FAIL.
-# KNOWN-ISSUE не влияет на код выхода (см. docs/NOTES.md, раздел 12):
+# KNOWN-ISSUE не влияет на код выхода:
 # это известные проблемы, для которых тест задаёт критерий приёмки
 # будущей правки. При FAIL артефакты автоматически сохраняются.
 # ============================================================================
@@ -414,15 +414,14 @@ fi
 expect_contains "C12: проброс порта в команде"  "$DRY3" "-p 28111:8080"
 expect_contains "C12: проброс переменной"       "$DRY3" "-e SMOKE_VAR"
 
-# C13: --git-safe / --resync-skel
+# C13: --git-safe 
 DRY4=""
-if DRY4="$(cd "$TEST_WS" && "$BIN" --dry-run --git-safe --resync-skel 2>/dev/null)"; then
-    ok "C13: dry-run с --git-safe/--resync-skel"
+if DRY4="$(cd "$TEST_WS" && "$BIN" --dry-run --git-safe 2>/dev/null)"; then
+    ok "C13: dry-run с --git-safe"
 else
     fail "C13: dry-run с флагами завершился с ошибкой"
 fi
 expect_contains "C13: PIBOX_GIT_SAFE=1"    "$DRY4" "PIBOX_GIT_SAFE=1"
-expect_contains "C13: PIBOX_RESYNC_SKEL=1" "$DRY4" "PIBOX_RESYNC_SKEL=1"
 
 # C14: переопределение лимитов
 DRY5=""
@@ -475,7 +474,6 @@ ENV_UID="$(mktemp -d "$TEST_ROOT/env-uid-XXXX")"
 ENV_FRESH="$(mktemp -d "$TEST_ROOT/env-fresh-XXXX")"
 ENV_USER="$(mktemp -d "$TEST_ROOT/env-user-XXXX")"
 ENV_NOMERGE="$(mktemp -d "$TEST_ROOT/env-nomerge-XXXX")"
-ENV_RESYNC="$(mktemp -d "$TEST_ROOT/env-resync-XXXX")"
 ENV_CAPS="$(mktemp -d "$TEST_ROOT/env-caps-XXXX")"
 ENV_E2E="$TEST_PIBOX/env/smoke-env"
 
@@ -503,48 +501,34 @@ expect_contains "R3: PATH содержит mise-шимы" "$PATH_OUT" ".local/sh
 capture_eq "R4: PID 1 = tini (gosu→tini exec-цепочка)" "tini" \
     docker_pibox "$ENV_UID" "$TEST_WS" -- cat /proc/1/comm
 
-# --- R5: skel-merge на свежем окружении ---
+# --- R5: dotfiles-слои на свежем окружении ---
 expect_ok "R5: первый запуск на пустом env" docker_pibox "$ENV_FRESH" "$TEST_WS" -- true
-if [ -f "$ENV_FRESH/.pibox_skel_initialized" ]; then ok "R5: маркер создан"; else fail "R5: маркер не создан"; fi
+if grep -qF 'PIBOX_SKELETON_V1' "$ENV_FRESH/.bashrc"; then ok "R5: заглушка с маркером создана"; else fail "R5: заглушка .bashrc не создана"; fi
+if [ -f "$ENV_FRESH/.bashrc.pibox" ] && grep -q 'mise activate' "$ENV_FRESH/.bashrc.pibox"; then ok "R5: сток .bashrc.pibox развёрнут"; else fail "R5: .bashrc.pibox отсутствует/пуст"; fi
 if [ -f "$ENV_FRESH/.bash_logout" ]; then ok "R5: .bash_logout из skel"; else fail "R5: .bash_logout из skel отсутствует"; fi
-if [ -f "$ENV_FRESH/.bashrc" ]; then ok "R5: .bashrc из skel"; else fail "R5: .bashrc из skel отсутствует"; fi
-expect_eq "R5: маркер принадлежит хост-пользователю" "$HOST_UID" "$(file_owner "$ENV_FRESH/.pibox_skel_initialized")"
+expect_eq "R5: заглушка принадлежит хост-пользователю" "$HOST_UID" "$(file_owner "$ENV_FRESH/.bashrc")"
 expect_eq "R5: .bash_logout принадлежит хост-пользователю" "$HOST_UID" "$(file_owner "$ENV_FRESH/.bash_logout")"
 
-# --- R6: пользовательские файлы не перезаписываются (cp -n) ---
+# --- R6: пользовательский .bashrc не теряется, а мигрирует в .user ---
 printf '%s\n' '# smoke user bashrc' > "$ENV_USER/.bashrc"
 expect_ok "R6: запуск с пользовательским .bashrc" docker_pibox "$ENV_USER" "$TEST_WS" -- true
-if grep -qF 'smoke user bashrc' "$ENV_USER/.bashrc"; then
-    ok "R6: пользовательский .bashrc не перезаписан"
+if grep -qF 'smoke user bashrc' "$ENV_USER/.bashrc.user"; then
+    ok "R6: пользовательский .bashrc мигрирован в .bashrc.user"
 else
-    fail "R6: .bashrc перезаписан skel'ом"
+    fail "R6: миграция .bashrc.user не сработала"
+fi
+if grep -qF 'PIBOX_SKELETON_V1' "$ENV_USER/.bashrc"; then
+    ok "R6: создана заглушка с маркером"
+else
+    fail "R6: заглушка не создана"
 fi
 
-# --- R7: повторный запуск не повторяет merge (mtime маркера) ---
+# --- R7: повторный запуск: заглушка не пересоздаётся ---
 expect_ok "R7: первый запуск" docker_pibox "$ENV_NOMERGE" "$TEST_WS" -- true
-touch -t 202001010000 "$ENV_NOMERGE/.pibox_skel_initialized"
-OLD_R7="$(file_mtime "$ENV_NOMERGE/.pibox_skel_initialized")"
+STUB_R7="$(md5sum "$ENV_NOMERGE/.bashrc" | cut -d' ' -f1)"
 expect_ok "R7: повторный запуск" docker_pibox "$ENV_NOMERGE" "$TEST_WS" -- true
-expect_eq "R7: маркер не пересоздаётся (merge пропущен)" "$OLD_R7" \
-    "$(file_mtime "$ENV_NOMERGE/.pibox_skel_initialized")"
-
-# --- R8: PIBOX_RESYNC_SKEL=1 форсирует повторный merge ---
-printf '%s\n' '# user bashrc' > "$ENV_RESYNC/.bashrc"
-expect_ok "R8: первый запуск" docker_pibox "$ENV_RESYNC" "$TEST_WS" -- true
-touch -t 202001010000 "$ENV_RESYNC/.pibox_skel_initialized"
-OLD_R8="$(file_mtime "$ENV_RESYNC/.pibox_skel_initialized")"
-expect_ok "R8: запуск с PIBOX_RESYNC_SKEL=1" \
-    docker_pibox "$ENV_RESYNC" "$TEST_WS" -e PIBOX_RESYNC_SKEL=1 -- true
-if [ "$(file_mtime "$ENV_RESYNC/.pibox_skel_initialized")" != "$OLD_R8" ]; then
-    ok "R8: маркер пересоздан (resync сработал)"
-else
-    fail "R8: resync не сработал"
-fi
-if grep -qF 'user bashrc' "$ENV_RESYNC/.bashrc"; then
-    ok "R8: resync не затирает пользовательские файлы (cp -n)"
-else
-    fail "R8: resync перезаписал пользовательский файл"
-fi
+expect_eq "R7: заглушка не изменилась при повторном запуске" "$STUB_R7" \
+    "$(md5sum "$ENV_NOMERGE/.bashrc" | cut -d' ' -f1)"
 
 # --- R9/R10: entrypoint отвергает опасные UID ---
 ERR9=""
@@ -557,15 +541,18 @@ expect_fail "R10: отказ при нечисловом HOST_UID" \
     docker run --rm -e HOST_UID=abc -e HOST_GID=1000 "$IMAGE" true
 
 # --- R11: git safe.directory (передача GIT_CONFIG_*) ---
-capture_eq "R11: PIBOX_GIT_SAFE=1 экспортирует GIT_CONFIG_*" "1|/home/pi/workspace" \
+capture_eq "R11: PIBOX_GIT_SAFE=1 экспортирует GIT_CONFIG_*" "1|*" \
     docker_pibox "$ENV_UID" "$TEST_WS" -e PIBOX_GIT_SAFE=1 -- \
     bash -c 'printf "%s|%s" "$GIT_CONFIG_COUNT" "$GIT_CONFIG_VALUE_0"'
 if command -v git >/dev/null 2>&1; then
     git init -q "$TEST_WS/gitrepo" 2>/dev/null || true
     echo hi > "$TEST_WS/gitrepo/file.txt"
-    expect_ok "R11: git status в workspace" \
+
+    expect_ok "R11: git status в workspace (репо с хоста, safe.directory)" \
         docker_pibox "$ENV_UID" "$TEST_WS" -e PIBOX_GIT_SAFE=1 -- \
         git -C /home/pi/workspace/gitrepo status
+    expect_ok "R11: git есть в контейнере" \
+        docker_pibox "$ENV_UID" "$TEST_WS" -- git --version
 else
     skip "R11: git на хосте не найден"
 fi
@@ -598,8 +585,7 @@ fi
 
 # --- R15: capabilities ---
 # CapBnd — bounding set (то, чем управляет --cap-add; переживает setuid).
-# CapEff — эффективный набор у pi. gosu сбрасывает его при setuid —
-# KNOWN-ISSUE: см. docs/NOTES.md (раздел 12) и Правку 2 к entrypoint.sh.
+# CapEff — эффективный набор у pi. gosu сбрасывает его при setuid
 CAP_BND="$(docker_pibox "$ENV_CAPS" "$TEST_WS" -- \
     bash -c 'sed -n "s/^CapBnd:[[:space:]]*//p" /proc/self/status' 2>/dev/null || true)"
 CAP_EFF="$(docker_pibox "$ENV_CAPS" "$TEST_WS" -- \
@@ -706,7 +692,7 @@ printf '\n'
 printf '  PASS: %d\n' "$PASS"
 if [ "$FAIL" -gt 0 ];  then printf '  FAIL: %d\n' "$FAIL"; fi
 if [ "$SKIP" -gt 0 ];  then printf '  SKIP: %d\n' "$SKIP"; fi
-if [ "$KNOWN" -gt 0 ]; then printf '  KNOWN-ISSUE: %d (не влияет на результат, см. docs/NOTES.md)\n' "$KNOWN"; fi
+if [ "$KNOWN" -gt 0 ]; then printf '  KNOWN-ISSUE: %d (не влияет на результат)\n' "$KNOWN"; fi
 
 if [ "$FAIL" -gt 0 ]; then
     KEEP=1

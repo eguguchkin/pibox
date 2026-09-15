@@ -37,7 +37,7 @@ PIBOX запускает агента в контейнере и решает т
 │  ├ .pi/agent/models.json  │              │                               │
 │  ├ .local/share/mise/     │              │ entrypoint (от root):         │
 │  ├ .bashrc  .gitconfig    │              │  1. UID/GID pi ← хост-юзер    │
-│  └ ...                    │              │  2. skel-merge (1-й запуск)   │
+│  └ ...                    │              │  2. dotfiles-слои (всегда)    │
 │                           │              │  3. gosu → tini → pi          │
 │ Model API :8080           │◄─────────────│ host.docker.internal:8080     │
 └───────────────────────────┘              └───────────────────────────────┘
@@ -117,7 +117,6 @@ cd pibox && git pull && ./install.sh --force
 | `--cpus N` | `2` | Лимит CPU |
 | `--pids-limit N` | `512` | Лимит процессов |
 | `--git-safe` | выкл | `git safe.directory` для workspace |
-| `--resync-skel` | выкл | Повторный merge эталонных dot-файлов |
 | `--dry-run` | — | Напечатать `docker run` без запуска |
 | `--name ИМЯ` | auto | Имя контейнера |
 
@@ -169,7 +168,9 @@ pibox --dry-run -p 8080:8080   # посмотреть итоговую docker-к
 | `.pi/agent/AGENTS.md` | Инструкции агенту для этого окружения |
 | `.local/share/mise/` | **Тулчейны mise — персистентны** |
 | `.local/lib/node_modules/` | Глобальные npm-пакеты (prefix `~/.local`) |
-| `.bashrc`, `.profile`, `.gitconfig`, `.tmux.conf` | Dot-файлы (из шаблона) |
+| `.bashrc` | Заглушка pibox — sources `.bashrc.pibox` (сток, обновляется) + `.bashrc.user` (правки пользователя) |
+| `.profile` | Аналогично: `.profile.pibox` + `.profile.user` |
+| `.gitconfig`, `.tmux.conf` | Dot-файлы (из шаблона/скелета, одноразовый merge) |
 
 ### Тулчейны через mise
 
@@ -249,7 +250,7 @@ php -v; go version           # переживают перезапуск кон�
 | git: `detected dubious ownership` | Владелец workspace ≠ UID контейнера. Запускайте `pibox --git-safe` — включает `safe.directory`, не трогая ваши файлы |
 | `bind: permission denied` на порту <1024 | У агента нет `CAP_NET_BIND_SERVICE`. Сервер внутри — на порт >1024, наружу любой: `-p 80:8080` |
 | `host.docker.internal` не резолвится | Docker < 20.10 — обновите Docker |
-| `strace -p PID` / `tcpdump` от pi падают | Известное ограничение: gosu сбрасывает capabilities при смене UID. `ping` и трассировка собственных потомков работают; детали — `docs/NOTES.md` |
+| `strace -p PID` / `tcpdump` от pi падают | Известное ограничение: gosu сбрасывает capabilities при смене UID. `ping` и трассировка собственных потомков работают |
 | `pibox: command not found` после install | PATH обновился — `exec $SHELL -l` или новый терминал |
 | `bad interpreter: /usr/bin/env^M` | CRLF в скриптах: `git add --renormalize .` (`.gitattributes` настроен) |
 | Файлы в workspace принадлежат root | Запускали `docker run` вручную без `-e HOST_UID`? Всегда через `pibox` |
@@ -266,7 +267,7 @@ php -v; go version           # переживают перезапуск кон�
 ```
 pibox/
 ├── Dockerfile          # multi-stage: ubuntu 24.04 + node 22 + pi + mise
-├── entrypoint.sh       # UID/GID, skel-merge, gosu→tini→pi
+├── entrypoint.sh       # UID/GID, dotfiles-слои, gosu→tini→pi
 ├── run.sh              # исходник CLI (после install — ~/pibox/bin/pibox)
 ├── install.sh          # установщик
 ├── models.json         # шаблон конфига моделей
@@ -298,7 +299,7 @@ shellcheck run.sh install.sh entrypoint.sh tests/smoke.sh   # как в CI
 
 ### Обновление версий
 
-В `Dockerfile` (ARG-параметры; выбор фиксируется в `docs/NOTES.md`):
+В `Dockerfile` (ARG-параметры):
 
 | ARG | Что | Правило |
 |---|---|---|
@@ -308,12 +309,3 @@ shellcheck run.sh install.sh entrypoint.sh tests/smoke.sh   # как в CI
 | `MISE_VERSION` | mise | точная версия с GitHub Releases |
 
 После смены: `pibox build --no-cache` + прогон smoke-тестов.
-
-### Известные ограничения
-
-Актуальный список с деталями — `docs/NOTES.md`, раздел 12: capabilities после
-gosu, сборка CLI-команды в строку, порты <1024 и др.
-
-## Лицензия
-
-MIT — см. [LICENSE](LICENSE).

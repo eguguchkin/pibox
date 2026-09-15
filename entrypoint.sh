@@ -5,21 +5,24 @@
 # Выполняется от root при КАЖДОМ запуске, до старта агента:
 #   1. Подстройка UID/GID пользователя pi под хост-пользователя
 #      (файлы в workspace принадлежат хост-юзеру, а не root)
-#   2. Первичная инициализация: merge /opt/skel -> /home/pi (cp -rn,
-#      только недостающие файлы), маркер для идемпотентности
+#   2. Слоёные dot-файлы:
+#      ~/.<f> = заглушка с маркером PIBOX_SKELETON_V1
+#      ~/.<f>.pibox = сток pibox (обновляется при каждом запуске)
+#      ~/.<f>.user = пользовательский слой (миграция из старого .<f>)
+#      Прочие skel-файлы — одноразовый cp -rn (как раньше).
 #   3. Опционально: git safe.directory для workspace
 #   4. Экспорт окружения (HOME, USER, PATH с mise-шимами)
 #   5. Передача управления: exec gosu pi:pi tini -- "$@"
 #
 # Контракт с Dockerfile (задача 3):
 #   - ENTRYPOINT ["/entrypoint.sh"], CMD ["pi"]
-#   - /opt/skel — эталонный home (фолбэк-дотфайлы)
+#   - /opt/skel — эталонный home: заглушки + .pibox-слои + прочие dot-файлы
 #   - gosu, tini — в /usr/bin/
 #   - ENV HOME=/home/pi, PATH с mise-шимами — переэкспортируются здесь
 #
 # Контракт с run.sh (задача 6):
 #   - HOST_UID, HOST_GID — передаются через -e
-#   - PIBOX_GIT_SAFE=1, PIBOX_RESYNC_SKEL=1 — опциональные флаги
+#   - PIBOX_GIT_SAFE=1 — опциональный флаг
 # ============================================================================
 
 set -euo pipefail
@@ -30,8 +33,6 @@ readonly PI_USER="pi"
 readonly PI_GROUP="pi"
 readonly PI_HOME="/home/pi"
 readonly SKEL_DIR="/opt/skel"
-readonly MARKER_FILE="${PI_HOME}/.pibox_skel_initialized"
-readonly WORKSPACE_DIR="${PI_HOME}/workspace"
 
 # --- Хелперы -----------------------------------------------------------------
 
@@ -94,58 +95,97 @@ adjust_uid_gid() {
     chown "${HOST_UID}:${HOST_GID}" "$PI_HOME"
 }
 
-# --- 3. Первичная инициализация (skel-merge) ----------------------------------
+# --- 3. Слоёные dot-файлы -----------------
+# Единственный источник правды — skel (собирается в Dockerfile):
+#   .<f> = заглушка с маркером, .<f>.pibox = сток. Entrypoint только
+#   синхронизирует их в home и мигрирует наследие в .<f>.user.
 
-merge_skel() {
-    # 3a. Принудительный повторный merge (флаг из run.sh)
-    if [ "${PIBOX_RESYNC_SKEL:-0}" = "1" ]; then
-        log "PIBOX_RESYNC_SKEL=1 — removing marker, will re-merge skel"
-        rm -f "$MARKER_FILE"
+# Один файл: сток/заглушка → из skel, миграция наследия в .<f>.
+# $1 — имя файла в skel и хоуме (например .bashrc)
+ensure_layered_file() {
+    local f="$1"
+    local cur="${PI_HOME}/${f}"
+    local pibox="${cur}.pibox"
+    local user="${cur}.user"
+
+    # 1. Сток pibox — обновляем всегда (этот слой принадлежит pibox)
+    if [ -f "${SKEL_DIR}/${f}.pibox" ]; then
+        cp -f "${SKEL_DIR}/${f}.pibox" "$pibox"
+        chown "${HOST_UID}:${HOST_GID}" "$pibox"
     fi
 
-    # 3b. Уже инициализировано — пропускаем
-    if [ -e "$MARKER_FILE" ]; then
-        return 0
+    # 2. Заглушка: absent или чужой файл (без маркера) → миграция, затем установка из skel
+    if [ -f "$cur" ] && ! grep -q "PIBOX_SKELETON" "$cur" 2>/dev/null; then
+        # Наследие/пользовательский файл → миграция в .user
+        if [ -e "$user" ]; then
+            local backup="${user}.bak.$(date +%Y%m%d-%H%M%S)"
+            mv "$cur" "$backup"
+            warn "${f}: существует и ${f}.user — старый файл сохранён как $(basename "$backup")"
+        else
+            mv "$cur" "$user"
+            log "${f}: существующий файл мигрирован в ${f}.user"
+        fi
+    fi
+    # Заглушка принадлежит pibox — сверяем со skel (cmp: если совпадает —
+    # не переписываем, идемпотентность и стабильный mtime)
+    if [ ! -f "$cur" ] || ! cmp -s "$cur" "${SKEL_DIR}/${f}"; then
+        cp -f "${SKEL_DIR}/${f}" "$cur"
+        chown "${HOST_UID}:${HOST_GID}" "$cur"
+        log "${f}: заглушка синхронизирована со skel (слои: ${f}.pibox + ${f}.user)"
+    fi
+}
+
+ensure_dotfiles() {
+    # 1. Слоёные файлы (обновление стока + миграция + заглушки).
+    # Вход — только если в skel есть ЗАГЛУШКА с маркером (гарантия Dockerfile):
+    # это защищает от сюрреалистичного случая, когда skel-файл без маркера
+    # превратил бы синхронизацию в бесконечную миграцию.
+    if [ -d "$SKEL_DIR" ]; then
+        local f
+        for f in .bashrc .profile; do
+            [ -f "${SKEL_DIR}/${f}.pibox" ] \
+                && grep -q "PIBOX_SKELETON" "${SKEL_DIR}/${f}" 2>/dev/null \
+                && ensure_layered_file "$f"
+        done
     fi
 
-    log "first run — merging ${SKEL_DIR} into ${PI_HOME}"
-
-    # 3c. Проверка наличия skel (не фатально — env может не нуждаться)
-    if [ ! -d "$SKEL_DIR" ]; then
-        warn "skel directory ${SKEL_DIR} not found, skipping merge"
-        touch "$MARKER_FILE"
-        chown "${HOST_UID}:${HOST_GID}" "$MARKER_FILE"
-        return 0
+    # 2. Прочие skel-файлы — одноразовый no-clobber merge (как раньше):
+    #    .gitconfig, .tmux.conf, .pi/agent/* и т.п. одно-инстансные, слои не нужны.
+    local marker="${PI_HOME}/.pibox_other_skel_done"
+    if [ ! -e "$marker" ]; then
+        if [ -d "$SKEL_DIR" ]; then
+            log "first run — merging ${SKEL_DIR} into ${PI_HOME} (no-clobber)"
+            cp -rn "${SKEL_DIR}/." "${PI_HOME}/" 2>/dev/null || true
+            # заглушки/слои могли только что создаться — не затираем,
+            # cp -rn их не тронет (уже существуют)
+        else
+            warn "skel directory ${SKEL_DIR} not found, skipping merge"
+        fi
+        touch "$marker"
+        chown "${HOST_UID}:${HOST_GID}" "$marker"
     fi
 
-    # 3d. Копируем ТОЛЬКО недостающие файлы (cp -n = no-clobber).
-    #     /. в конце — ОБЯЗАТЕЛЬНО: без него dot-файлы не копируются.
-    #     cp выполняется от root → скопированные файлы принадлежат root.
-    cp -rn "${SKEL_DIR}/." "${PI_HOME}/"
-
-    # 3e. Чиним владельца ТОЛЬКО у root-owned файлов (только что скопированных).
-    #     Файлы из bind-mount (env/.template) уже принадлежат хост-юзеру.
+    # 3. Чиним владельца root-owned файлов (только что скопированных)
     find "$PI_HOME" -user 0 \
         -exec chown -h "${HOST_UID}:${HOST_GID}" {} + 2>/dev/null || true
 
-    # 3f. Создаём маркер (от root, затем чиним владельца)
-    touch "$MARKER_FILE"
-    chown "${HOST_UID}:${HOST_GID}" "$MARKER_FILE"
-
-    log "skel merge complete, marker: ${MARKER_FILE}"
+    # 4. Гарантия: сам каталог /home/pi принадлежит целевому UID:GID
+    chown "${HOST_UID}:${HOST_GID}" "$PI_HOME"
 }
+
 
 # --- 4. Git safe.directory (опционально) --------------------------------------
 
 setup_git_safe() {
     if [ "${PIBOX_GIT_SAFE:-0}" = "1" ]; then
-        log "git safe.directory enabled for ${WORKSPACE_DIR}"
+        log "git safe.directory=* enabled"
 
         # Через переменные окружения git — не пишем в файлы пользователя.
         # git читает GIT_CONFIG_COUNT / GIT_CONFIG_KEY_n / GIT_CONFIG_VALUE_n.
+        # '*' отключает проверку владельца для всех репозиториев.
         export GIT_CONFIG_COUNT=1
         export GIT_CONFIG_KEY_0=safe.directory
-        export GIT_CONFIG_VALUE_0="$WORKSPACE_DIR"
+        export GIT_CONFIG_VALUE_0="*"
     fi
 }
 
@@ -206,7 +246,7 @@ Check Dockerfile ENTRYPOINT."
     fi
 
     adjust_uid_gid
-    merge_skel
+    ensure_dotfiles
     setup_git_safe
     prepare_env
     exec_command "$@"

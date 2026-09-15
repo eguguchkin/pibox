@@ -20,7 +20,7 @@ PIBOX — обвязка вокруг [Pi Coding Agent](https://pi.dev/) (npm: `
 | Файл | Назначение |
 |---|---|
 | `Dockerfile` | multi-stage: ubuntu 24.04 + node 22 + pi + mise; ARG-версии пинуются |
-| `entrypoint.sh` | от root: подстановка UID/GID хост-юзера → skel-merge (1-й запуск) → gosu → tini → pi |
+| `entrypoint.sh` | от root: подстановка UID/GID хост-юзера → dotfiles-слои (заглушка + `.pibox`/`.user`) → gosu → tini → pi |
 | `run.sh` | исходник CLI `pibox` (после install — `~/pibox/bin/pibox`); подкоманды: run/build/env/shell |
 | `install.sh` | установщик: создаёт `~/pibox`, bin в PATH, блок `>>> pibox installer >>>` в rc-файле |
 | `models.json` | шаблон конфига моделей (локальный OpenAI-совместимый сервер по умолчанию) |
@@ -32,7 +32,7 @@ PIBOX — обвязка вокруг [Pi Coding Agent](https://pi.dev/) (npm: `
 
 ## Контракты между компонентами (важно при правках)
 
-- entrypoint ↔ Dockerfile: `/opt/skel`, переменные `HOST_UID`/`HOST_GID`, юзер `pi`, маркер инициализации.
+- entrypoint ↔ Dockerfile: `/opt/skel` (заглушки + `.pibox`-слои + прочие dot-файлы), маркер `PIBOX_SKELETON_V1` в заглушках, переменные `HOST_UID`/`HOST_GID`, юзер `pi`.
 - run.sh/install.sh → шаблон: `PIBOX_DIR/env/<name>`, `PIBOX_DIR/models.json`, `PIBOX_DIR/env/.template/`.
 - install.sh: копирует `run.sh` → `~/pibox/bin/pibox`, build-контекст → `~/pibox/docker/`.
 - Модель API с хоста доступна из контейнера как `http://host.docker.internal:8080`.
@@ -75,6 +75,17 @@ CI (`.github/workflows/ci.yml`): shellcheck + проверка exec-битов +
   редактирует по ходу жизни. Синхронизация обратной стороны (env → шаблон) — вручную,
   осознанно: рабочие окружения пользователей не должны молча переучиваться при
   обновлении pibox.
+
+- **Слоёные dot-файлы вместо одноразового skel-merge**:
+  `~/.bashrc`/`~/.profile` — заглушки с маркером `PIBOX_SKELETON_V1`, которые
+  source-ят два слоя: `.<f>.pibox` (сток pibox, обновляется при каждом запуске контейнера)
+  и `.<f>.user` (пользовательские правки; миграция из старого монолитного `.bashrc` —
+  автоматически при первом запуске нового entrypoint, при коллизии — `.bak.TIMESTAMP`).
+  Единственный источник правды — skel (собирается в Dockerfile): entrypoint только
+  синхронизирует заглушку и сток в home (`cmp`-проверка — без перезаписи при совпадении)
+  и мигрирует наследие. Вход в слоёную обработку — только если в skel-заглушке есть
+  маркер (защита от миграции-зацикливания при ошибке в Dockerfile). Прочие skel-файлы —
+  прежний одноразовый `cp -rn` (маркер `.pibox_other_skel_done`).
 
 ## Статус
 
