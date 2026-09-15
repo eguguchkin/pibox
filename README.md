@@ -46,7 +46,7 @@ PIBOX запускает агента в контейнере и решает т
 ## Требования
 
 | Требование | Проверка |
-|---|---|
+| --- | --- |
 | Linux + Docker Engine **≥ 20.10** | `docker --version` |
 | Пользователь в группе `docker` | `docker info` без ошибок |
 | ~1.5 ГБ на образ + место под окружения | `df -h ~` |
@@ -90,16 +90,17 @@ pibox
 ### Команды
 
 | Команда | Описание |
-|---|---|
+| --- | --- |
 | `pibox [run] [ОПЦИИ] [--] [PI_ARGS…]` | Запуск агента (run — по умолчанию) |
 | `pibox build [--no-cache]` | Сборка Docker-образа |
 | `pibox env list` | Список окружений |
 | `pibox env create ИМЯ` | Создать окружение из шаблона |
 | `pibox env remove ИМЯ` | Удалить окружение (**без подтверждения**; `default` защищён) |
 | `pibox shell [-e ИМЯ]` | Отладочная bash-оболочка в контейнере |
+| `pibox doctor [-e ИМЯ] [--fix]` | Диагностика: docker, образ, каркас env, платформенные дубли расширений, npm-кэш; `--fix` удаляет дубли (только при живом gnu-твине) и восстанавливает каркас |
 | `pibox --help` / `--version` | Справка / версия |
 
-`pibox update` и `pibox doctor` — заглушки. Обновление:
+`pibox update` — заглушка. Обновление:
 
 ```bash
 cd pibox && git pull && ./install.sh
@@ -111,7 +112,7 @@ cd pibox && git pull && ./install.sh
 ### Опции запуска
 
 | Опция | По умолчанию | Описание |
-|---|---|---|
+| --- | --- | --- |
 | `-e, --env ИМЯ` | `default` | Окружение; создаётся автоматически при отсутствии |
 | `-p, --publish SPEC` | — | Проброс порта, повторяемая (`-p 3000:3000`) |
 | `-E, --pass-env VAR` | — | Проброс переменной окружения, повторяемая |
@@ -168,7 +169,7 @@ pibox --dry-run -p 8080:8080   # посмотреть итоговую docker-к
 ### Что хранится в окружении
 
 | Путь | Содержимое |
-|---|---|
+| --- | --- |
 | `.pi/agent/sessions/` | Древовидные сессии `.jsonl` |
 | `.pi/agent/models.json` | Конфиг моделей (копия при первом запуске) |
 | `.pi/agent/{extensions,skills,prompts,themes}/` | Кастомизации Pi |
@@ -253,7 +254,7 @@ php -v; go version           # переживают перезапуск кон�
 ## Решение проблем
 
 | Симптом | Решение |
-|---|---|
+| --- | --- |
 | git: `detected dubious ownership` | Владелец workspace ≠ UID контейнера. Запускайте `pibox --git-safe` — включает `safe.directory`, не трогая ваши файлы |
 | `bind: permission denied` на порту <1024 | У агента нет `CAP_NET_BIND_SERVICE`. Сервер внутри — на порт >1024, наружу любой: `-p 80:8080` |
 | `host.docker.internal` не резолвится | Docker < 20.10 — обновите Docker |
@@ -309,7 +310,7 @@ shellcheck run.sh install.sh entrypoint.sh tests/smoke.sh   # как в CI
 В `Dockerfile` (ARG-параметры):
 
 | ARG | Что | Правило |
-|---|---|---|
+| --- | --- | --- |
 | `UBUNTU_VERSION` | базовый образ | пиновать LTS (`24.04`) |
 | `NODE_IMAGE` | источник Node | мажор + distro; **glibc builder ≤ runtime** (bookworm ≤ noble — не trixie!) |
 | `PI_VERSION` | `@earendil-works/pi-coding-agent` | точная версия |
