@@ -47,6 +47,20 @@ npm install -g typescript
 tsc -v                    # бинарник попадёт в ~/.local/bin (уже на PATH)
 ```
 
+### Пакеты с нативной сборкой — через mise, НЕ через npm -g
+
+Если пакет тянет node-gyp/tree-sitter (ошибки вида `gyp ERR! not found: make`,
+`gyp ERR! stack Error`): в образе нет `make`/`gcc`, а apt недоступен. Пример:
+`@tobilu/qmd` (зависимости tree-sitter-*). Решение:
+
+```bash
+mise use -g npm:@tobilu/qmd   # mise ставит в ~/.local/share/mise, сборка проходит
+qmd --version
+```
+
+mise пробрасывает пакеты через свои шимы — бинарник доступен на PATH как обычный.
+Шаблон: `mise use -g npm:<имя-пакета>` для любого npm-пакета с нативными сборками.
+
 ## 3. Python — только через venv (PEP 668)
 
 `pip install` в системный python падает (`externally-managed-environment`) — это не баг:

@@ -38,6 +38,8 @@ python venv (PEP 668). Детали — скилл install-languages (загру
 - Системный pip заблокирован (PEP 668, `externally-managed-environment`) — только venv.
 - `~/.npmrc` нет по умолчанию → первый `npm install -g` может упасть с EACCES —
   `npm config set prefix ~/.local` (см. скилл install-languages).
+- Пакеты с нативной сборкой (node-gyp, tree-sitter) через `npm -g` не ставятся —
+  нет make/gcc; обход: `mise use -g npm:<пакет>` (см. скилл install-languages).
 - Сеть открыта (если хост не ограничил): curl/wget/git работают.
 - Инструменты: есть curl, dig, nslookup, ss; нет nc, telnet, traceroute, sudo.
 - Capabilities сбрасываются: strace чужих процессов и tcpdump не работают.
