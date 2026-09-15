@@ -35,7 +35,7 @@ PIBOX — обвязка вокруг [Pi Coding Agent](https://pi.dev/) (npm: `
 - entrypoint ↔ Dockerfile: `/opt/skel` (заглушки + `.pibox`-слои + прочие dot-файлы), маркер `PIBOX_SKELETON_V1` в заглушках, переменные `HOST_UID`/`HOST_GID`, юзер `pi`.
 - entrypoint ↔ файлы home (договор о владельце): весь `/home/pi` — bind-mount хоста, все файлы в нём считаются принадлежащими хост-юзеру (`HOST_UID:HOST_GID`); рекурсивный chown при старте НЕ делается. Владелец чинится только у файлов, копируемых из skel (точечные chown + одноразовый `find -user 0` с `-xdev` внутри первого merge под маркером `.pibox_other_skel_done`). Перенос env между машинами с разным UID — разовый `chown -R` на хосте.
 - run.sh/install.sh → шаблон: `PIBOX_DIR/env/<name>`, `PIBOX_DIR/models.json`, `PIBOX_DIR/env/.template/`.
-- install.sh: копирует `run.sh` → `~/pibox/bin/pibox`, build-контекст → `~/pibox/docker/`.
+- install.sh: копирует `run.sh` → `~/pibox/bin/pibox`, build-контекст → `~/pibox/docker/`. Перезапись CLI/docker/.template — при каждом запуске; `--force` дополнительно удаляет ВСЕ окружения (`env/*`); `models.json` не перезаписывается никогда (API-ключи).
 - Модель API с хоста доступна из контейнера как `http://host.docker.internal:8080`.
 
 ## Как проверять изменения

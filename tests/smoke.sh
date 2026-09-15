@@ -260,24 +260,36 @@ done
 
 if [ -x "$BIN" ]; then ok "I4: bin/pibox исполняемый"; else fail "I4: bin/pibox не исполняемый"; fi
 
-# I5: повторная установка без --force не трогает существующее
+# I5: повторная установка без --force: скрипты/docker/шаблон обновляются
+# ВСЕГДА, models.json и env/* не трогаются
 touch -t 202001010000 "$BIN"
 OLD_BIN_MTIME="$(file_mtime "$BIN")"
 echo "// smoke-sentinel" >> "$TEST_PIBOX/models.json"
+echo "// smoke-sentinel" >> "$TEST_PIBOX/docker/Dockerfile"
 
 if "$SRC_DIR/install.sh" --dir "$TEST_PIBOX" --no-path --src "$SRC_DIR" >/dev/null 2>&1; then
     ok "I5: повторная установка (без --force) прошла"
 else
     fail "I5: повторная установка завершилась с ошибкой"
 fi
-expect_eq "I5: bin/pibox не перезаписан" "$OLD_BIN_MTIME" "$(file_mtime "$BIN")"
-if grep -qF "smoke-sentinel" "$TEST_PIBOX/models.json"; then
-    ok "I5: /models.json не перезаписан"
+if [ "$(file_mtime "$BIN")" != "$OLD_BIN_MTIME" ]; then
+    ok "I5: bin/pibox перезаписан (всегда)"
 else
-    fail "I5: models.json перезаписан без --force"
+    fail "I5: bin/pibox не перезаписан"
+fi
+if grep -qF "smoke-sentinel" "$TEST_PIBOX/docker/Dockerfile"; then
+    fail "I5: docker/Dockerfile не перезаписан"
+else
+    ok "I5: docker/Dockerfile перезаписан (всегда)"
+fi
+if grep -qF "smoke-sentinel" "$TEST_PIBOX/models.json"; then
+    ok "I5: models.json не перезаписан"
+else
+    fail "I5: models.json перезаписан"
 fi
 
-# I6: --force обновляет файлы установки, но НЕ трогает env/*
+# I6: --force удаляет ВСЕ окружения (env/*), default пересоздаётся из
+# шаблона; models.json не трогается даже при --force
 echo keepme > "$TEST_PIBOX/env/default/.smoke-sentinel"
 touch -t 202001010000 "$BIN"
 OLD_BIN_MTIME="$(file_mtime "$BIN")"
@@ -292,15 +304,20 @@ if [ "$(file_mtime "$BIN")" != "$OLD_BIN_MTIME" ]; then
 else
     fail "I6: bin/pibox не обновлён при --force"
 fi
-if [ -f "$TEST_PIBOX/env/default/.smoke-sentinel" ]; then
-    ok "I6: env/default не затронут --force"
+if [ -e "$TEST_PIBOX/env/default/.smoke-sentinel" ]; then
+    fail "I6: --force не удалил окружение default"
 else
-    fail "I6: --force затронул env/default"
+    ok "I6: --force удалил env/default (sentinel исчез)"
+fi
+if [ -d "$TEST_PIBOX/env/default" ]; then
+    ok "I6: env/default пересоздан из шаблона"
+else
+    fail "I6: env/default не пересоздан после --force"
 fi
 if grep -qF "smoke-sentinel" "$TEST_PIBOX/models.json"; then
-    fail "I6: --force не обновил models.json (документированное поведение — перезапись)"
+    ok "I6: models.json не тронут даже при --force"
 else
-    ok "I6: models.json обновлён (--force, перезапись — документирована)"
+    fail "I6: models.json перезаписан при --force"
 fi
 
 # ============================================================================

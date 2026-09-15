@@ -8,13 +8,14 @@
 #   env/.template/  шаблон для новых окружений (имя с точкой — glob '*' его не матчит,
 #                   поэтому 'env list' и 'env remove' шаблон не видят)
 #   env/            окружения (default создаётся из шаблона)
-#   models.json     конфиг моделей (копируется, если нет)
+#   models.json     конфиг моделей (копируется только если нет;
+#                   НИКОГДА не перезаписывается — там API-ключи пользователя)
 #
 # Идемпотентность:
-#   - Повторный запуск без --force не перезаписывает существующие файлы
-#   - --force обновляет CLI, docker/, env/.template/ (но НЕ env/*)
-#   - env/default создаётся только если отсутствует
-#   - models.json копируется только если отсутствует (или с --force)
+#   - bin/pibox, docker/ и env/.template/ перезаписываются ВСЕГДА:
+#     установка = обновление, build-контекст — точное зеркало исходников
+#   - env/* не трогается; с --force ВСЕ окружения удаляются
+#     (default пересоздаётся из свежего шаблона)
 #
 # Опции:
 #   -d, --dir PATH     целевая директория (дефолт: ~/pibox или $PIBOX_DIR)
@@ -49,16 +50,16 @@ pibox installer ${VERSION}
 
 Опции:
     -d, --dir PATH     целевая директория (дефолт: \$PIBOX_DIR или ~/pibox)
-    -f, --force        принудительное обновление существующих файлов
+    -f, --force        удалить ВСЕ окружения (env/*) и пересоздать default
     --no-path          не добавлять PIBOX_DIR/bin в PATH
     --src PATH         директория исходников (дефолт: $(dirname "$0"))
     -h, --help         эта справка
     -V, --version      версия установщика
 
 Примеры:
-    ./install.sh                     # установка в ~/pibox
+    ./install.sh                     # установка/обновление в ~/pibox
     ./install.sh -d /opt/pibox       # установка в /opt/pibox
-    ./install.sh --force             # обновление существующей установки
+    ./install.sh --force             # обновление + удаление всех окружений (env/*)
     PIBOX_DIR=~/my-pibox ./install.sh
 EOF
 }
@@ -228,44 +229,35 @@ install() {
     # 1. Создание структуры директорий
     mkdir -p "$target_bin" "$target_docker" "$target_env_template" "$target_env"
 
-    # 2. Копирование CLI (run.sh → bin/pibox)
-    if [[ -f "$target_bin/pibox" ]] && (( FORCE == 0 )); then
-        warn "bin/pibox уже существует. Используйте --force для обновления."
-    else
-        log "Копирую CLI: run.sh → bin/pibox"
-        cp "$SRC_DIR/run.sh" "$target_bin/pibox"
-        chmod 755 "$target_bin/pibox"
-    fi
+    # 2. Копирование CLI (run.sh → bin/pibox) — всегда: установка = обновление
+    log "Копирую CLI: run.sh → bin/pibox"
+    cp "$SRC_DIR/run.sh" "$target_bin/pibox"
+    chmod 755 "$target_bin/pibox"
 
-    # 3. Копирование build-контекста
-    if (( FORCE == 1 )); then
-        log "Обновляю build-контекст в docker/"
-        safe_rm_rf "$target_docker"
-        mkdir -p "$target_docker"
-    fi
-
+    # 3. Build-контекст — всегда точное зеркало исходников (сборка должна
+    # соответствовать репо; чужие/устаревшие файлы в docker/ не выживают)
+    log "Обновляю build-контекст в docker/"
+    safe_rm_rf "$target_docker"
+    mkdir -p "$target_docker"
     for file in Dockerfile entrypoint.sh .dockerignore; do
-        if [[ ! -f "$target_docker/$file" ]] || (( FORCE == 1 )); then
-            log "Копирую: $file → docker/"
-            cp "$SRC_DIR/$file" "$target_docker/"
-        fi
+        log "Копирую: $file → docker/"
+        cp "$SRC_DIR/$file" "$target_docker/"
     done
 
-    # 4. Шаблон окружения: копирование env/.template/
-    if (( FORCE == 1 )); then
-        log "Обновляю env/.template/"
-        safe_rm_rf "$target_env_template"
-        mkdir -p "$target_env_template"
-        cp -a "$SRC_DIR/env/.template/." "$target_env_template/"
-    else
-        if [[ ! -d "$target_env_template/.pi" ]]; then
-            log "Копирую env/.template/"
-            mkdir -p "$target_env_template"
-            cp -a "$SRC_DIR/env/.template/." "$target_env_template/"
-        fi
-    fi
+    # 4. Шаблон окружения — всегда свежий из исходников
+    log "Обновляю env/.template/"
+    safe_rm_rf "$target_env_template"
+    mkdir -p "$target_env_template"
+    cp -a "$SRC_DIR/env/.template/." "$target_env_template/"
 
-    # 5. Создание default окружения (если не существует)
+    # 5. --force: удалить ВСЕ окружения (env/*). Без --force не трогаем.
+    if (( FORCE == 1 )); then
+        warn "--force: удаляю ВСЕ окружения в ${target_env} (включая default)"
+        safe_rm_rf "$target_env"
+    fi
+    mkdir -p "$target_env"
+
+    # 6. Создание default окружения (если не существует)
     if [[ ! -d "$target_env/default" ]]; then
         log "Создаю окружение default из шаблона"
         mkdir -p "$target_env/default"
@@ -274,17 +266,16 @@ install() {
         log "Окружение default уже существует — пропускаю создание"
     fi
 
-    # 6. Копирование models.json (если не существует или force)
-    if [[ ! -f "$target_models" ]] || (( FORCE == 1 )); then
-        if [[ -f "$SRC_DIR/models.json" ]]; then
-            log "Копирую models.json → models.json"
-            cp "$SRC_DIR/models.json" "$target_models"
+    # 7. models.json — не перезаписывается НИКОГДА (API-ключи пользователя):
+    #    копируется только если отсутствует
+    if [[ ! -f "$target_models" ]] && [[ -f "$SRC_DIR/models.json" ]]; then
+        log "Копирую models.json → models.json"
+        cp "$SRC_DIR/models.json" "$target_models"
 
-            warn "Не забудьте отредактировать ${target_models} и указать ваши API-ключи."
-        fi
+        warn "Не забудьте отредактировать ${target_models} и указать ваши API-ключи."
     fi
 
-    # 7. Добавление в PATH
+    # 8. Добавление в PATH
     if (( NO_PATH == 0 )); then
         add_to_path
     fi
