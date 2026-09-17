@@ -36,10 +36,16 @@ readonly SKEL_DIR="/opt/skel"
 
 # --- Хелперы -----------------------------------------------------------------
 
-log()  { echo "==> pibox: $*" >&2; }
-warn() { echo "pibox: warn:  $*" >&2; }
-err()  { echo "pibox: error: $*" >&2; }
-die()  { err "$*"; exit 1; }
+# \r\n: docker run -t переводит хостовый TTY в raw-режим (ONLCR отключён),
+# поэтому «голый» \n даёт съехавшие отступы. В cooked-режиме лишний \r
+# безвреден (терминал схлопывает \r\r\n).
+log() { printf '%s\r\n' "==> pibox: $*" >&2; }
+warn() { printf '%s\r\n' "pibox: warn:  $*" >&2; }
+err() { printf '%s\r\n' "pibox: error: $*" >&2; }
+die() {
+    err "$*"
+    exit 1
+}
 
 # --- 1. Чтение и валидация HOST_UID / HOST_GID -------------------------------
 
@@ -117,7 +123,8 @@ ensure_layered_file() {
     if [ -f "$cur" ] && ! grep -q "PIBOX_SKELETON" "$cur" 2>/dev/null; then
         # Наследие/пользовательский файл → миграция в .user
         if [ -e "$user" ]; then
-            local backup="${user}.bak.$(date +%Y%m%d-%H%M%S)"
+            local backup
+            backup="${user}.bak.$(date +%Y%m%d-%H%M%S)"
             mv "$cur" "$backup"
             warn "${f}: существует и ${f}.user — старый файл сохранён как $(basename "$backup")"
         else
@@ -142,9 +149,9 @@ ensure_dotfiles() {
     if [ -d "$SKEL_DIR" ]; then
         local f
         for f in .bashrc .profile; do
-            [ -f "${SKEL_DIR}/${f}.pibox" ] \
-                && grep -q "PIBOX_SKELETON" "${SKEL_DIR}/${f}" 2>/dev/null \
-                && ensure_layered_file "$f"
+            [ -f "${SKEL_DIR}/${f}.pibox" ] &&
+                grep -q "PIBOX_SKELETON" "${SKEL_DIR}/${f}" 2>/dev/null &&
+                ensure_layered_file "$f"
         done
     fi
 
@@ -174,7 +181,6 @@ ensure_dotfiles() {
     # 3. Гарантия: сам каталог /home/pi принадлежит целевому UID:GID
     chown "${HOST_UID}:${HOST_GID}" "$PI_HOME"
 }
-
 
 # --- 4. Git safe.directory (опционально) --------------------------------------
 

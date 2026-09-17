@@ -51,9 +51,12 @@ PIBOX_DIR="${PIBOX_DIR:-$_pibox_default}"
 
 # --- Хелперы -------------------------------------------------------------------
 
-err() { echo "pibox: error: $*" >&2; }
-warn() { echo "pibox: warn:  $*" >&2; }
-log() { echo "==> pibox: $*" >&2; }
+# \r\n: docker run -t переводит хостовый TTY в raw-режим (ONLCR отключён),
+# поэтому «голый» \n даёт съехавшие отступы. В cooked-режиме лишний \r
+# безвреден (терминал схлопывает \r\r\n).
+err() { printf '%s\r\n' "pibox: error: $*" >&2; }
+warn() { printf '%s\r\n' "pibox: warn:  $*" >&2; }
+log() { printf '%s\r\n' "==> pibox: $*" >&2; }
 die() {
     err "$*"
     exit 1
@@ -140,7 +143,8 @@ validate_env_name() {
 
 # Проверка, что workspace не совпадает с PIBOX_DIR и не вложен в него
 check_workspace_isolation() {
-    local ws="$(pwd)"
+    local ws
+    ws="$(pwd)"
     local ws_real
     local pibox_real
 
@@ -616,6 +620,108 @@ cmd_shell() {
 #
 # Пропускает уже установленное совпадающей версии; для остальных вызывает
 # pi install npm:имя@версия. settings.json окружения дополняется записями
+
+# --- живая визуализация установки (в стиле docker build) ---------------------
+#
+# В TTY: постоянная область экрана — зелёная строка статуса «▸ [n/N] pkg (Xs)»
+# с секундомером и под ней серое скользящее окно из N последних строк вывода
+# команды. По завершении пакета строка «✓ pkg (Xs)» фиксируется (уходит в
+# скроллбэк), окно очищается для следующего пакета. Вне TTY — простой вывод.
+# Полный журнал команды пишется в $tmpdir/full.log (показывается при ошибке).
+#
+# Портируемость (macOS): без flock, без mapfile, без GNU date -r. Конкурентный
+# рендер устранён архитектурно: рисует ТОЛЬКО фоновый таймер; читатель вывода
+# лишь дописывает строки в файл окна (одиночный O_APPEND-write атомарен).
+_EXT_WIN_LINES="${PIBOX_EXT_WINDOW:-10}"
+_EXT_TICK="${PIBOX_EXT_TICK:-0.5}"
+
+_ext_strip_ansi() {
+    # убрать ANSI-коды и CR, чтобы строки окна имели предсказуемую длину
+    tr -d '\r' | sed $'s/\x1b\[[0-9;]*[a-zA-Z]//g'
+}
+
+_ext_render() {
+    # $1 — строка статуса (plain), $2 — цвет (32/33/31), $3 — файл окна.
+    # Печатает область «статус + окно» от текущей позиции курсора и ВОЗВРАЩАЕТ
+    # курсор на строку статуса — следующий рендер/commit/erase начинает
+    # оттуда же, никаких пустых строк-заполнителей не нужно. Пока строк
+    # меньше _EXT_WIN_LINES, окно растёт вниз от статуса; лишние строки
+    # вытесняются сверху (скролл). Хвост ниже окна стирается \033[J.
+    # Вызывается только из фонового таймера — блокировка не нужна.
+    local status="$1" color="$2" winfile="$3"
+    local nshown k
+    [[ -t 2 ]] || return 0
+    printf '\033[%sm%s\033[0m\033[K\n' "$color" "$status"
+    # последние N непустых строк окна (без mapfile — совместимо с bash 3.2)
+    nshown=$(grep -c . "$winfile" 2>/dev/null) || nshown=0
+    ((nshown > _EXT_WIN_LINES)) && nshown=$_EXT_WIN_LINES
+    for ((k = nshown; k > 0; k--)); do
+        printf '\033[90m  │ %s\033[0m\033[K\n' "$(tail -n "$k" "$winfile" 2>/dev/null | head -n 1)"
+    done
+    # вернуться на строку статуса (курсор после последнего \n — на строке
+    # ниже окна, значит вверх nshown+1), колонку — в начало строки
+    printf '\033[%dA\r' "$((nshown + 1))"
+}
+
+_ext_timer_loop() {
+    # фоновый секундомер-рендерер: 2 раза в секунду перерисовывает статус и окно,
+    # пока существует файл-флаг $1. Единственный, кто рисует во время установки.
+    local running="$1" statusfile="$2" startfile="$3" winfile="$4"
+    local status start now elapsed line
+    while [[ -f "$running" ]]; do
+        status="$(cat "$statusfile" 2>/dev/null)"
+        start="$(cat "$startfile" 2>/dev/null)"
+        now="$(date +%s)"
+        if [[ "$start" =~ ^[0-9]+$ ]]; then elapsed=$((now - start)); else elapsed=0; fi
+        line="▸ ${status} (${elapsed}s)"
+        # жёлтый в процессе установки — зелёным строка станет в _ext_commit
+        _ext_render "$line" 33 "$winfile" >&2
+        sleep "$_EXT_TICK"
+    done
+}
+
+_ext_commit() {
+    # зафиксировать итог пакета: курсор стоит на строке статуса (так оставляет
+    # _ext_render) — стереть живую область вниз (\033[J), затем напечатать
+    # строку «✓/✗ …» навсегда в скроллбэк. Курсор оказывается в начале
+    # следующей строки — следующий пункт добавится ниже, предыдущие не
+    # затираются.
+    local line="$1" color="$2"
+    [[ -t 2 ]] || return 0
+    printf '\033[J'
+    printf '\033[%dm%s\033[0m\n' "$color" "$line"
+}
+
+_ext_erase_region() {
+    # стереть живую область (окно+статус) от строки статуса вниз
+    [[ -t 2 ]] || return 0
+    printf '\033[J'
+}
+
+_ext_on_interrupt() {
+    # обработка Ctrl+C во время установки: остановить таймер, стереть живую
+    # область, вернуть курсор, выйти с кодом 130 (как принято для SIGINT).
+    # Курсор в момент прерывания стоит на строке статуса — \033[J стирает
+    # область вниз.
+    local running="$1" tpid="$2"
+    rm -f "$running" 2>/dev/null
+    if [[ -n "$tpid" ]]; then
+        # таймер уже мог умереть от того же SIGINT — ошибки игнорируем:
+        # ловушка работает при set -e, ненулевой статус убил бы её до exit 130
+        kill "$tpid" 2>/dev/null || true
+        wait "$tpid" 2>/dev/null || true
+    fi
+    if [[ -t 2 ]]; then
+        printf '\033[J\033[?25h' >&2
+    fi
+    err "прервано пользователем — незавершённые пакеты можно доустановить повторным запуском"
+    exit 130
+}
+
+_ext_show_cursor() {
+    [[ -t 2 ]] || return 0
+    printf '\033[?25h' >&2
+}
 # из манифеста (без дублей) — это включает загрузку расширений в pi.
 cmd_extensions() {
     local subcmd="${1:-}"
@@ -668,7 +774,11 @@ cmd_extensions() {
     local entry have
     local -a need_install=() need_settings=()
 
+    # Фаза планирования — молча: решаем, что ставить. Ничего не печатаем,
+    # чтобы пользователь видел прогресс шаг за шагом, а не список заранее.
+    # actions[] параллелен EXT_ENTRIES: "skip" | "install" (пусто = не разобрали).
     log "Расширения окружения '$env_name' ($total в манифесте)..."
+    local -a actions=()
     for entry in ${EXT_ENTRIES[@]+"${EXT_ENTRIES[@]}"}; do
         idx=$((idx + 1))
         if ! parse_ext_entry "$entry"; then
@@ -678,14 +788,10 @@ cmd_extensions() {
         fi
         have="$(get_installed_ext_version "$nm" "$EXT_NAME")"
         if [[ "$have" == "$EXT_VER" ]]; then
-            printf '  [%d/%d] %s@%s — уже установлен\n' "$idx" "$total" "$EXT_NAME" "$EXT_VER" >&2
+            actions+=("skip")
             skipped=$((skipped + 1))
         else
-            if [[ -n "$have" ]]; then
-                printf '  [%d/%d] %s@%s — обновляю (установлено %s)...\n' "$idx" "$total" "$EXT_NAME" "$EXT_VER" "$have" >&2
-            else
-                printf '  [%d/%d] %s@%s — устанавливаю...\n' "$idx" "$total" "$EXT_NAME" "$EXT_VER" >&2
-            fi
+            actions+=("install")
             need_install+=("$entry")
         fi
         need_settings+=("$entry")
@@ -694,20 +800,122 @@ cmd_extensions() {
     # Установка: по одному пакету за запуск pi. Чужая ошибка не рушит остаток;
     # ошибка одного пакета не должна блокировать остальные (npm-дерево общее,
     # но установки pi идемпотентны — безопасно перезапускать).
-    if [[ ${#need_install[@]} -gt 0 ]]; then
-        for entry in ${need_install[@]+"${need_install[@]}"}; do
-            parse_ext_entry "$entry" || continue
-            printf '  pi install %s\n' "$entry" >&2
+    if [[ ${#need_install[@]} -eq 0 ]]; then
+        # всё уже установлено — зелёные строки по числу расширений манифеста
+        local a_idx=0 e
+        for e in ${EXT_ENTRIES[@]+"${EXT_ENTRIES[@]}"}; do
+            a_idx=$((a_idx + 1))
+            parse_ext_entry "$e" || continue # warn уже выведен при планировании
+            if [[ -t 2 ]]; then
+                printf '\033[32m✓ [%d/%d] %s@%s — уже установлен\033[0m\n' \
+                    "$a_idx" "$total" "$EXT_NAME" "$EXT_VER" >&2
+            else
+                printf '✓ [%d/%d] %s@%s — уже установлен\n' \
+                    "$a_idx" "$total" "$EXT_NAME" "$EXT_VER" >&2
+            fi
+        done
+    else
+        local tty_render=0
+        [[ -t 2 ]] && tty_render=1
+        local tmpdir winfile statusfile startfile running fulllog tpid
+        tmpdir="$(mktemp -d "${TMPDIR:-/tmp}/pibox-ext.XXXXXX")"
+        winfile="$tmpdir/window"
+        statusfile="$tmpdir/status"
+        startfile="$tmpdir/start"
+        running="$tmpdir/running"
+        fulllog="$tmpdir/full.log"
+        : >"$winfile"
+        : >"$fulllog"
+
+        local cur=0 ok_line ok_color elapsed now
+        local START_TS entry_act
+        local idx=0 # сброс: idx уже использован в фазе планирования
+        local a_idx=0
+        if [[ $tty_render -eq 1 ]]; then
+            printf '\033[?25l' >&2 # скрыть курсор на всю установку — один раз
+        fi
+        trap '_ext_on_interrupt "$running" "${tpid:-}"' INT TERM
+        for entry in ${EXT_ENTRIES[@]+"${EXT_ENTRIES[@]}"}; do
+            idx=$((idx + 1))
+            parse_ext_entry "$entry" || continue # warn уже выведен при планировании
+            entry_act=""
+            if [[ $a_idx -lt ${#actions[@]} ]]; then
+                entry_act="${actions[$a_idx]}"
+            fi
+            a_idx=$((a_idx + 1))
+            if [[ "$entry_act" == "skip" ]]; then
+                # пропуск печатается на месте, в порядке манифеста; живой
+                # области в этот момент нет — предыдущий пакет уже зафиксирован
+                if [[ $tty_render -eq 1 ]]; then
+                    printf '\033[32m  [%d/%d] %s@%s — уже установлен\033[0m\n' \
+                        "$idx" "$total" "$EXT_NAME" "$EXT_VER" >&2
+                else
+                    printf '  [%d/%d] %s@%s — уже установлен\n' \
+                        "$idx" "$total" "$EXT_NAME" "$EXT_VER" >&2
+                fi
+                continue
+            fi
+            cur=$((cur + 1))
+            have="$(get_installed_ext_version "$nm" "$EXT_NAME")"
+            START_TS="$(date +%s)"
+            if [[ -n "$have" ]]; then
+                printf '%s' "[$idx/$total] $EXT_NAME@$EXT_VER (обновляю, было $have)" >"$statusfile"
+            else
+                printf '%s' "[$idx/$total] $EXT_NAME@$EXT_VER" >"$statusfile"
+            fi
+            printf '%s' "$START_TS" >"$startfile"
+            : >"$winfile"
+            if [[ $tty_render -eq 1 ]]; then
+                : >"$running"
+                _ext_timer_loop "$running" "$statusfile" "$startfile" "$winfile" &
+                tpid=$!
+            else
+                printf '  pi install %s\n' "$entry" >&2
+            fi
+            # if-обёртка гасит errexit/pipefail от docker-провала. Читатель НЕ
+            # рисует — только пишет в full.log и в окно; рисует один таймер.
+            # Атомарность дописывания: одиночный printf со встроенными \n.
             if docker run --rm \
                 -e "HOST_UID=$(id -u)" -e "HOST_GID=$(id -g)" \
                 -v "$env_dir:/home/pi" \
-                "$IMAGE_NAME" pi install "$entry" >&2; then
+                "$IMAGE_NAME" pi install "$entry" 2>&1 | while IFS= read -r line; do
+                printf '%s\n' "$line" >>"$fulllog"
+                _ext_strip_ansi <<<"$line" | sed 's/^/  │ /' >>"$winfile"
+            done; then
                 installed=$((installed + 1))
+                ok_color=32
+                ok_line="✓ $EXT_NAME@$EXT_VER"
             else
-                warn "не удалось установить: $entry (продолжаю остальными)"
                 failed=$((failed + 1))
+                ok_color=31
+                ok_line="✗ $EXT_NAME@$EXT_VER — ошибка (полный лог: $fulllog)"
+                if [[ $tty_render -ne 1 ]]; then
+                    warn "не удалось установить: $entry (продолжаю остальными)"
+                fi
+            fi
+            now="$(date +%s)"
+            elapsed=$((now - START_TS))
+            ok_line="$ok_line (${elapsed}s)"
+            if [[ $tty_render -eq 1 ]]; then
+                rm -f "$running"
+                wait "$tpid" 2>/dev/null || true
+                # стереть живую область, затем ✓/✗ фиксируется навсегда;
+                # следующий пункт добавится строкой ниже
+                _ext_commit "$ok_line" "$ok_color" >&2
+            else
+                printf '  %s\n' "$ok_line" >&2
             fi
         done
+        if [[ $tty_render -eq 1 ]]; then
+            _ext_show_cursor
+            trap - INT TERM
+        fi
+        if [[ $failed -gt 0 && $tty_render -eq 1 ]]; then
+            # живая область уже стёрта в _ext_commit; курсор ниже ✓-строк
+            printf '\033[90m── последние строки журнала ──\033[0m\n' >&2
+            tail -n 20 "$fulllog" | _ext_strip_ansi >&2
+        fi
+        rm -rf "$tmpdir"
     fi
 
     # settings.json: добавляем только отсутствующие записи (порядок сохраняем).
@@ -735,12 +943,14 @@ cmd_extensions() {
         mkdir -p "$(dirname "$settings")"
         local m
         for m in ${missing[@]+"${missing[@]}"}; do
-            jq --arg p "$m" '.packages = ((.packages // []) + [$p] | unique)' "$settings" >"$settings.tmp" &&
-                mv "$settings.tmp" "$settings" || {
+            if jq --arg p "$m" '.packages = ((.packages // []) + [$p] | unique)' "$settings" >"$settings.tmp" &&
+                mv "$settings.tmp" "$settings"; then
+                :
+            else
                 rm -f "$settings.tmp"
                 warn "не удалось дополнить settings.json ($m) — добавьте вручную: \"packages\" += \"$m\""
                 failed=$((failed + 1))
-            }
+            fi
         done
     fi
 
@@ -840,14 +1050,17 @@ cmd_doctor() {
         d_err "образ ${IMAGE_NAME} не найден — соберите: pibox build"
     fi
 
-    # D3: состав образа — pi на месте, тяжёлые тулчейны не протекли
+    # D3: состав образа — pi на месте, тяжёлые тулчейны не протекли.
+    # Важно: /home/pi — персистентный bind-mount, туда пользователь осознанно
+    # ставит тулчейны через mise; они НЕ часть образа. Поэтому ищем только
+    # то, что реально лежит в образе: резолвим путь бинарника и игнорируем /home.
     if [[ "$image_ok" == "0" ]]; then
         if docker run --rm "$IMAGE_NAME" bash -c \
-            'command -v pi >/dev/null 2>&1 || exit 1; for t in gcc gdb rustc cargo cmake valgrind strace tcpdump; do command -v "$t" >/dev/null 2>&1 && exit 1; done' \
+            'command -v pi >/dev/null 2>&1 || exit 1; for t in gcc gdb rustc cargo cmake valgrind strace tcpdump; do p="$(command -v "$t" 2>/dev/null)" || continue; case "$(readlink -f "$p")" in /home/*) continue ;; esac; exit 1; done' \
             >/dev/null 2>&1; then
             d_ok "образ: pi на месте, тяжёлых тулчейнов нет"
         else
-            d_warn "образ не прошёл проверку состава (pi/тулчейны) — пересоберите: pibox build --no-cache"
+            d_warn "в образе протек тулчейн или пропал pi — пересоберите: pibox build --no-cache"
         fi
     fi
 
@@ -1093,21 +1306,54 @@ cmd_doctor() {
                     d_warn "расширения: версии расходятся с манифестом в $m_drift пакетах — обновление: pibox extensions install -e $env_name"
                 fi
 
-                # установленное, но не из манифеста (ручные установки) — только информируем
-                local f9 r9
-                local -a extra_pkgs=()
-                while IFS= read -r f9; do
-                    r9="${f9#"$nm9"/}"
-                    r9="${r9%/package.json}"
-                    case "$r9" in @*) ;; esac # имя scope-пакета уже правильное
-                    local known9=0 m9
-                    for m9 in ${manifest_names[@]+"${manifest_names[@]}"}; do
-                        [[ "$r9" == "$m9" ]] && known9=1 && break
-                    done
-                    [[ "$known9" == "1" ]] || extra_pkgs+=("$r9")
+                # Замыкание зависимостей: рекурсивно собираем deps (+optionalDeps)
+                # всех пакетов из манифеста по установленным package.json.
+                # needed_req — обязательные deps (их отсутствие = сломанная установка),
+                # needed_any — включая optional (не обязаны быть на диске, но
+                # не дают считать сам пакет «лишним»).
+                local -A pkg_deps=() pkg_opt=() # имя -> "dep1 dep2 ..."
+                local pj9 rd9
+                while IFS= read -r pj9; do
+                    rd9="${pj9#"$nm9"/}"
+                    rd9="${rd9%/package.json}"
+                    pkg_deps["$rd9"]="$(jq -r '[.dependencies // {} | keys[]] | join(" ")' "$pj9" 2>/dev/null)"
+                    pkg_opt["$rd9"]="$(jq -r '[.optionalDependencies // {} | keys[]] | join(" ")' "$pj9" 2>/dev/null)"
                 done < <(find "$nm9" -mindepth 2 -maxdepth 3 -name package.json 2>/dev/null)
+
+                local -A needed_req=() seen9=()
+                local -a queue9=()
+                local q9 dep9
+                for m9 in ${manifest_names[@]+"${manifest_names[@]}"}; do queue9+=("$m9"); done
+                while [[ ${#queue9[@]} -gt 0 ]]; do
+                    q9="${queue9[-1]}"
+                    queue9=("${queue9[@]:1}")
+                    [[ -n "${seen9[$q9]+x}" ]] && continue
+                    seen9["$q9"]=1
+                    for dep9 in ${pkg_deps["$q9"]:-} ${pkg_opt["$q9"]:-}; do
+                        [[ -z "$dep9" ]] && continue
+                        [[ -n "${seen9[$dep9]+x}" ]] || queue9+=("$dep9")
+                    done
+                    for dep9 in ${pkg_deps["$q9"]:-}; do
+                        [[ -z "$dep9" ]] && continue
+                        needed_req["$dep9"]=1
+                    done
+                done
+
+                # Сверка: установленное вне замыкания — «лишнее» (ручная
+                # установка); обязательная зависимость, которой нет на диске —
+                # сломанная установка.
+                local -a extra_pkgs=() dep_missing=()
+                for rd9 in "${!pkg_deps[@]}"; do
+                    [[ -z "${seen9[$rd9]+x}" ]] && extra_pkgs+=("$rd9")
+                done
+                for rd9 in "${!needed_req[@]}"; do
+                    [[ ! -f "$nm9/$rd9/package.json" ]] && dep_missing+=("$rd9")
+                done
                 if [[ ${#extra_pkgs[@]} -gt 0 ]]; then
-                    d_info "вне манифеста (${#extra_pkgs[@]}): ${extra_pkgs[*]}"
+                    d_info "вне манифеста и не зависимости (${#extra_pkgs[@]}): ${extra_pkgs[*]}"
+                fi
+                if [[ ${#dep_missing[@]} -gt 0 ]]; then
+                    d_warn "сломанные зависимости (${#dep_missing[@]}): ${dep_missing[*]} — переустановка: pibox extensions install -e $env_name"
                 fi
 
                 # отсутствующие в node_modules и в settings.json (см. выше)
@@ -1172,4 +1418,5 @@ main() {
 }
 
 # Точка входа
+trap : INT # SIGINT не должен убивать скрипт до выполнения локальных ловушек
 main "$@"

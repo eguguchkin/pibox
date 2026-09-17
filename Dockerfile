@@ -62,12 +62,15 @@ RUN apt-get update \
       git tar gzip unzip zip rsync bzip2 xz-utils zstd lz4 \
       python3 python3-pip python3-venv \
       jq ripgrep yq vim htop ncdu hexedit \
+      shellcheck shfmt \
       default-jre-headless \
       tesseract-ocr tesseract-ocr-eng tesseract-ocr-rus \
  && rm -rf /var/lib/apt/lists/*
 # Примечания: hexedit/ncdu/yq — из universe (в docker-образе Ubuntu он
 # включён). yq из apt — Python-обёртка над jq, НЕ Go-yq (mikefarah),
 # синтаксис отличается.
+# shellcheck/shfmt — линтер/форматтер shell-скриптов (run.sh, entrypoint.sh,
+# install.sh, tests/smoke.sh): агент может сам прогонять проверки без mise.
 
 # — locale —
 RUN locale-gen en_US.UTF-8 && update-locale LANG=en_US.UTF-8
