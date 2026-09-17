@@ -9,6 +9,7 @@
 #   shell          отладочная оболочка в контейнере
 #   update         обновление установки
 #   doctor         диагностика окружения (аудит + --fix)
+#   extensions     установка расширений из манифеста env/extensions.txt
 #
 # Опции запуска:
 #   -e, --env NAME         окружение (по умолчанию default)
@@ -35,7 +36,9 @@ set -euo pipefail
 
 VERSION="0.1.0"
 DEFAULT_ENV="default"
-IMAGE_NAME="pibox:latest"
+# Имя образа можно переопределить (smoke-тесты используют это для проверки
+# поведения при отсутствии образа); по умолчанию — pibox:latest
+IMAGE_NAME="${PIBOX_IMAGE:-pibox:latest}"
 
 # Определяем PIBOX_DIR относительно расположения скрипта.
 # Если скрипт лежит в каталоге bin — поднимаемся на уровень выше,
@@ -74,6 +77,18 @@ pibox — запуск Pi Coding Agent в изолированном Docker-ко
     shell [-e NAME]            отладочная оболочка в контейнере
     update                     обновление установки
     doctor [-e NAME] [--fix]   диагностика окружения (аудит + --fix)
+    extensions install         установка расширений из манифеста
+                               env/extensions.txt (см. ниже)
+
+Опции extensions:
+    pibox extensions install [-e NAME]
+                               установить набор расширений в окружение NAME
+                               (по умолчанию default). Окружение должно
+                               существовать: pibox env create NAME. Ставит
+                               недостающее/обновляет расхождение с манифестом;
+                               уже установленное совпадающей версии пропускает.
+                               При выполнении npm-установок агент НЕ запускается —
+                               используется одноразовый контейнер.
 
 Опции запуска:
     -e, --env NAME             окружение (по умолчанию default)
@@ -97,6 +112,7 @@ pibox — запуск Pi Coding Agent в изолированном Docker-ко
     pibox -- pi -p "test"      # передача аргументов pi
     pibox shell -e php8        # оболочка в окружении php8
     pibox --keep               # оставить контейнер после выхода
+    pibox extensions install   # эталонный набор расширений в default
 
 EOF
 }
@@ -185,6 +201,68 @@ list_envs() {
     done
 }
 
+# --- Манифест расширений ---------------------------------------------------------
+
+EXTENSIONS_FILE="env/extensions.txt"
+
+# Читает манифест расширений (строки вида npm:имя@версия).
+# Заполняет глобальный массив EXT_ENTRIES; при отсутствии файла — пустой.
+load_extensions_manifest() {
+    local manifest="$PIBOX_DIR/$EXTENSIONS_FILE"
+    EXT_ENTRIES=()
+    [[ -f "$manifest" ]] || return 0
+    local line
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        [[ "$line" == \#* ]] && continue # строка-комментарий целиком
+        line="${line%\#*}"               # хвостовой комментарий
+        # нормализуем пробелы по краям
+        line="${line#"${line%%[![:space:]]*}"}"
+        line="${line%"${line##*[![:space:]]}"}"
+        [[ -z "$line" ]] && continue
+        EXT_ENTRIES+=("$line")
+    done <"$manifest"
+}
+
+# Разбирает запись "npm:имя@версия" -> EXT_NAME, EXT_VER.
+# Возвращает 1, если запись не разобрана.
+parse_ext_entry() {
+    EXT_NAME=""
+    EXT_VER=""
+    local entry="$1"
+    [[ "$entry" == npm:* ]] || return 1
+    local body="${entry#npm:}"
+    EXT_VER="${body##*@}"
+    EXT_NAME="${body%@*}"
+    [[ -n "$EXT_NAME" && -n "$EXT_VER" ]] || return 1
+    local bare="${EXT_NAME#@}" # scope-пакеты (@scope/name) допустимы, @ внутри имени — нет
+    [[ "$bare" != *@* ]] || return 1
+}
+
+# Читает список пакетов из settings.json окружения (jq).
+# Заполняет EXT_SETTINGS_PACKAGES.
+load_settings_packages() {
+    local settings="$1"
+    EXT_SETTINGS_PACKAGES=()
+    [[ -f "$settings" ]] || return 0
+    local p
+    while IFS= read -r p; do
+        [[ -z "$p" ]] && continue
+        EXT_SETTINGS_PACKAGES+=("$p")
+    done < <(jq -r '.packages[]?' "$settings" 2>/dev/null)
+}
+
+# Установленная версия npm-пакета в env (пусто, если не установлен).
+# $1 - каталог node_modules, $2 - имя пакета (со scope).
+get_installed_ext_version() {
+    local nm="$1" name="$2" pj
+    pj="$nm/$name/package.json"
+    [[ -f "$pj" ]] || {
+        printf ''
+        return
+    }
+    jq -r '.version // empty' "$pj" 2>/dev/null || printf ''
+}
+
 # --- Сборка команды docker run --------------------------------------------------
 
 # Глобальный массив, в который собирается готовая команда docker run.
@@ -216,6 +294,9 @@ build_docker_run_cmd() {
     # Монтирования
     RUN_CMD+=("-v" "$PIBOX_DIR/env/$ENV_NAME:/home/pi")
     RUN_CMD+=("-v" "$(pwd):/home/pi/workspace")
+    # Персистентный кэш jiti (трансляция TS-расширений pi): иначе /tmp/jiti
+    # пересоздаётся при каждом запуске и первый старт pi уходит на компиляцию.
+    RUN_CMD+=("-v" "$PIBOX_DIR/env/$ENV_NAME/.cache/jiti:/tmp/jiti")
 
     # Проброс портов (совместимо с bash 3.2 + set -u)
     local opt
@@ -389,6 +470,10 @@ cmd_run() {
         docker rm -f "$CONTAINER_NAME" >/dev/null 2>&1 || true
     fi
 
+    # Каталог кэша jiti: создаётся от хост-юзера ДО docker run, иначе docker
+    # создаст bind-mount-цель от root и pi не сможет туда писать.
+    mkdir -p "$PIBOX_DIR/env/$ENV_NAME/.cache/jiti"
+
     log "Запуск pi в окружении '$ENV_NAME' (контейнер: $CONTAINER_NAME)..."
 
     # Запуск. Ловим код возврата вручную, чтобы set -e не убил скрипт
@@ -508,12 +593,163 @@ cmd_shell() {
 
     check_docker
 
+    # Персистентный кэш jiti — как в build_docker_run_cmd; mkdir от хост-юзера.
+    mkdir -p "$PIBOX_DIR/env/$env_name/.cache/jiti"
+
     log "Запуск оболочки в окружении '$env_name'..."
     docker run --rm -it \
         -e HOST_UID="$(id -u)" -e HOST_GID="$(id -g)" \
         -v "$PIBOX_DIR/env/$env_name:/home/pi" \
         -v "$(pwd):/home/pi/workspace" \
+        -v "$PIBOX_DIR/env/$env_name/.cache/jiti:/tmp/jiti" \
         "$IMAGE_NAME" bash
+}
+
+# Установка расширений из манифеста env/extensions.txt.
+#
+# Каждый пакет ставится отдельным запуском pi внутри одноразового контейнера
+# (смонтирован только env; workspace не нужен — npm-установки ни от него
+# не зависят, а монтирование произвольного cwd в фоновую операцию — лишний риск).
+# pi сам кладёт файлы под хост-пользователя? Нет: контейнер работает от pi
+# (uid=HOST_UID через entrypoint), поэтому файлы в bind-mount сразу с
+# владельцем хост-юзера — chown не нужен.
+#
+# Пропускает уже установленное совпадающей версии; для остальных вызывает
+# pi install npm:имя@версия. settings.json окружения дополняется записями
+# из манифеста (без дублей) — это включает загрузку расширений в pi.
+cmd_extensions() {
+    local subcmd="${1:-}"
+    [[ "$subcmd" == "install" ]] || {
+        err "использование: pibox extensions install [-e ИМЯ]"
+        exit 1
+    }
+    shift
+
+    local env_name="$DEFAULT_ENV"
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+        -e | --env)
+            [[ $# -ge 2 ]] || die "Опция $1 требует аргумент"
+            env_name="$2"
+            shift 2
+            ;;
+        -h | --help)
+            usage
+            exit 0
+            ;;
+        *)
+            err "Неизвестная опция для extensions install: $1"
+            usage
+            exit 1
+            ;;
+        esac
+    done
+
+    validate_env_name "$env_name"
+
+    local env_dir="$PIBOX_DIR/env/$env_name"
+    if [[ ! -d "$env_dir" ]]; then
+        die "окружение '$env_name' не найдено — создайте: pibox env create $env_name"
+    fi
+
+    load_extensions_manifest
+    if [[ ${#EXT_ENTRIES[@]} -eq 0 ]]; then
+        die "манифест пуст или отсутствует: $PIBOX_DIR/$EXTENSIONS_FILE"
+    fi
+
+    check_docker
+    if ! docker image inspect "$IMAGE_NAME" >/dev/null 2>&1; then
+        die "образ $IMAGE_NAME не найден — соберите: pibox build"
+    fi
+
+    local nm="$env_dir/.pi/agent/npm/node_modules"
+    local total=${#EXT_ENTRIES[@]}
+    local installed=0 skipped=0 failed=0 idx=0
+    local entry have
+    local -a need_install=() need_settings=()
+
+    log "Расширения окружения '$env_name' ($total в манифесте)..."
+    for entry in ${EXT_ENTRIES[@]+"${EXT_ENTRIES[@]}"}; do
+        idx=$((idx + 1))
+        if ! parse_ext_entry "$entry"; then
+            warn "[$idx/$total] не могу разобрать запись манифеста: $entry"
+            failed=$((failed + 1))
+            continue
+        fi
+        have="$(get_installed_ext_version "$nm" "$EXT_NAME")"
+        if [[ "$have" == "$EXT_VER" ]]; then
+            printf '  [%d/%d] %s@%s — уже установлен\n' "$idx" "$total" "$EXT_NAME" "$EXT_VER" >&2
+            skipped=$((skipped + 1))
+        else
+            if [[ -n "$have" ]]; then
+                printf '  [%d/%d] %s@%s — обновляю (установлено %s)...\n' "$idx" "$total" "$EXT_NAME" "$EXT_VER" "$have" >&2
+            else
+                printf '  [%d/%d] %s@%s — устанавливаю...\n' "$idx" "$total" "$EXT_NAME" "$EXT_VER" >&2
+            fi
+            need_install+=("$entry")
+        fi
+        need_settings+=("$entry")
+    done
+
+    # Установка: по одному пакету за запуск pi. Чужая ошибка не рушит остаток;
+    # ошибка одного пакета не должна блокировать остальные (npm-дерево общее,
+    # но установки pi идемпотентны — безопасно перезапускать).
+    if [[ ${#need_install[@]} -gt 0 ]]; then
+        for entry in ${need_install[@]+"${need_install[@]}"}; do
+            parse_ext_entry "$entry" || continue
+            printf '  pi install %s\n' "$entry" >&2
+            if docker run --rm \
+                -e "HOST_UID=$(id -u)" -e "HOST_GID=$(id -g)" \
+                -v "$env_dir:/home/pi" \
+                "$IMAGE_NAME" pi install "$entry" >&2; then
+                installed=$((installed + 1))
+            else
+                warn "не удалось установить: $entry (продолжаю остальными)"
+                failed=$((failed + 1))
+            fi
+        done
+    fi
+
+    # settings.json: добавляем только отсутствующие записи (порядок сохраняем).
+    local settings="$env_dir/.pi/agent/settings.json"
+    mkdir -p "$(dirname "$settings")"
+    [[ -f "$settings" ]] || printf '{"packages":[]}\n' >"$settings"
+    load_settings_packages "$settings"
+    local -a missing=()
+    local want known
+    for want in ${need_settings[@]+"${need_settings[@]}"}; do
+        parse_ext_entry "$want" || continue
+        # в settings.json источник без версии (pi хранит "npm:имя")
+        local short="npm:$EXT_NAME"
+        known=""
+        local sp
+        for sp in ${EXT_SETTINGS_PACKAGES[@]+"${EXT_SETTINGS_PACKAGES[@]}"}; do
+            if [[ "$sp" == "$short" || "$sp" == "$want" ]]; then
+                known=1
+                break
+            fi
+        done
+        [[ -n "$known" ]] || missing+=("$short")
+    done
+    if [[ ${#missing[@]} -gt 0 ]]; then
+        mkdir -p "$(dirname "$settings")"
+        local m
+        for m in ${missing[@]+"${missing[@]}"}; do
+            jq --arg p "$m" '.packages = ((.packages // []) + [$p] | unique)' "$settings" >"$settings.tmp" &&
+                mv "$settings.tmp" "$settings" || {
+                rm -f "$settings.tmp"
+                warn "не удалось дополнить settings.json ($m) — добавьте вручную: \"packages\" += \"$m\""
+                failed=$((failed + 1))
+            }
+        done
+    fi
+
+    printf '\n' >&2
+    log "Готово: новых: $installed, уже стояли: $skipped, проблем: $failed"
+    if [[ $failed -gt 0 ]]; then
+        die "есть ошибки установки — повторите: pibox extensions install -e $env_name"
+    fi
+    log "Расширения подключатся при следующем запуске pi в окружении '$env_name'"
 }
 
 # Обновление установки (заглушка)
@@ -522,7 +758,8 @@ cmd_update() {
     warn "Команда update ещё не реализована (см. задачу 7)"
 }
 
-# Диагностика окружения: docker, образ, каркас env, дубли расширений, кэш.
+# Диагностика окружения: docker, образ, каркас env, дубли расширений, кэш,
+# сверка расширений с манифестом.
 #
 # Всё делается на хосте: env-каталог — это bind-mount, его файлы видны напрямую,
 # а arch хоста = arch контейнера, libc контейнера всегда glibc (Ubuntu-образ).
@@ -797,6 +1034,90 @@ cmd_doctor() {
         d_info "контейнер $cname не запущен (это нормально; запуск: pibox run -e $env_name)"
     fi
 
+    # D9: расширения — сверка окружения с манифестом env/extensions.txt
+    # (нужен jq; без него проверка пропускается). Три вида расхождений:
+    #   отсутствует пакет (WARN)  — установка: pibox extensions install
+    #   версия не совпадает (WARN) — обновление той же командой
+    #   пакет вне манифеста (INFO) — установлен вручную, pibox его не трогает
+    # Расхождения с манифестом — не ошибки: свежее окружение без расширений —
+    # нормальное состояние (doctor не должен падать с кодом 1).
+    if ! command -v jq >/dev/null 2>&1; then
+        d_info "jq не найден — сверка расширений с манифестом пропущена"
+    else
+        load_extensions_manifest
+        if [[ ${#EXT_ENTRIES[@]} -eq 0 ]]; then
+            d_info "манифест расширений пуст или отсутствует: $EXTENSIONS_FILE"
+        elif [[ "$env_ok" == "1" ]]; then
+            : # окружения нет — D4 уже сообщил, сверять не с чем
+        else
+            local m_entry m_have m_tot=0 m_miss=0 m_drift=0 manifest_err=0
+            local -a manifest_names=() manifest_vers=()
+            for m_entry in ${EXT_ENTRIES[@]+"${EXT_ENTRIES[@]}"}; do
+                if parse_ext_entry "$m_entry"; then
+                    manifest_names+=("$EXT_NAME")
+                    manifest_vers+=("$EXT_VER")
+                else
+                    d_err "манифест: не удалось разобрать запись: $m_entry"
+                    manifest_err=1
+                fi
+            done
+            if [[ "$manifest_err" == "0" ]]; then
+                local nm9="$env_dir/.pi/agent/npm/node_modules" i9 count9=${#manifest_names[@]}
+                # установки pi добавляют запись и в settings.json; но пакет
+                # может быть осознанно установлен без загрузки (напр. конфликт
+                # memory-расширений — см. шапку манифеста), поэтому settings
+                # проверяем только для пакетов, отсутствующих в node_modules:
+                # их нет нигде — чинится одной командой extensions install.
+                load_settings_packages "$env_dir/.pi/agent/settings.json"
+                local -a set_missing=()
+                for ((i9 = 0; i9 < count9; i9++)); do
+                    m_tot=$((m_tot + 1))
+                    m_have="$(get_installed_ext_version "$nm9" "${manifest_names[$i9]}")"
+                    if [[ -z "$m_have" ]]; then
+                        m_miss=$((m_miss + 1))
+                        local short9="npm:${manifest_names[$i9]}" found9=0 sp9
+                        for sp9 in ${EXT_SETTINGS_PACKAGES[@]+"${EXT_SETTINGS_PACKAGES[@]}"}; do
+                            [[ "$sp9" == "$short9" || "$sp9" == "npm:${manifest_names[$i9]}@${manifest_vers[$i9]}" ]] && found9=1 && break
+                        done
+                        [[ "$found9" == "1" ]] || set_missing+=("$short9")
+                    elif [[ "$m_have" != "${manifest_vers[$i9]}" ]]; then
+                        m_drift=$((m_drift + 1))
+                        d_warn "версия не совпадает: ${manifest_names[$i9]} — установлено ${m_have:-нет}, в манифесте ${manifest_vers[$i9]}"
+                    fi
+                done
+                if [[ "$m_miss" -gt 0 ]]; then
+                    d_warn "расширения: отсутствуют $m_miss из $m_tot (манифест $EXTENSIONS_FILE) — установка: pibox extensions install -e $env_name"
+                elif [[ "$m_drift" -eq 0 ]]; then
+                    d_ok "расширения: все $m_tot из манифеста установлены"
+                else
+                    d_warn "расширения: версии расходятся с манифестом в $m_drift пакетах — обновление: pibox extensions install -e $env_name"
+                fi
+
+                # установленное, но не из манифеста (ручные установки) — только информируем
+                local f9 r9
+                local -a extra_pkgs=()
+                while IFS= read -r f9; do
+                    r9="${f9#"$nm9"/}"
+                    r9="${r9%/package.json}"
+                    case "$r9" in @*) ;; esac # имя scope-пакета уже правильное
+                    local known9=0 m9
+                    for m9 in ${manifest_names[@]+"${manifest_names[@]}"}; do
+                        [[ "$r9" == "$m9" ]] && known9=1 && break
+                    done
+                    [[ "$known9" == "1" ]] || extra_pkgs+=("$r9")
+                done < <(find "$nm9" -mindepth 2 -maxdepth 3 -name package.json 2>/dev/null)
+                if [[ ${#extra_pkgs[@]} -gt 0 ]]; then
+                    d_info "вне манифеста (${#extra_pkgs[@]}): ${extra_pkgs[*]}"
+                fi
+
+                # отсутствующие в node_modules и в settings.json (см. выше)
+                if [[ ${#set_missing[@]} -gt 0 ]]; then
+                    d_warn "в settings.json нет ${#set_missing[@]} пакетов (${set_missing[*]}) — чинит pibox extensions install -e $env_name"
+                fi
+            fi
+        fi
+    fi
+
     # Итог
     printf '\n'
     if [[ "$errors" -eq 0 && "$warnings" -eq 0 ]]; then
@@ -838,6 +1159,9 @@ main() {
         ;;
     doctor)
         cmd_doctor "$@"
+        ;;
+    extensions)
+        cmd_extensions "$@"
         ;;
     *)
         err "Неизвестная подкоманда: $SUBCOMMAND"

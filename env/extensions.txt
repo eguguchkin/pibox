@@ -1,0 +1,22 @@
+# Манифест расширений pi — эталонный набор pibox.
+#
+# Устанавливаются в окружение командой:
+#   pibox extensions install [-e ИМЯ]
+#
+# Формат: по одному пакету на строку, источник npm, версия запиненна точно
+# (воспроизводимость окружений; осознанный апдейт = правка строки + git diff).
+# Комментарии (строки с #) и пустые строки игнорируются.
+#
+# Два независимых memory-расширения (@yandy0725/pi-memory,
+# pi-self-learning) грузятся параллельно; при конфликте инструментов
+# одно из них отключается в settings.json окружения.
+
+npm:pi-mcp-adapter@2.34.0
+npm:@everyx/pi-web-tools@1.2.4
+npm:context-mode@1.0.169
+npm:@tintinweb/pi-subagents@0.19.0
+npm:pi-docparser@4.0.0
+npm:pi-universal-view@0.2.1
+npm:pi-lens@4.1.6
+npm:@yandy0725/pi-memory@1.3.4
+npm:pi-self-learning@0.5.0

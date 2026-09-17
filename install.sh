@@ -8,6 +8,7 @@
 #   env/.template/  шаблон для новых окружений (имя с точкой — glob '*' его не матчит,
 #                   поэтому 'env list' и 'env remove' шаблон не видят)
 #   env/            окружения (default создаётся из шаблона)
+#   env/extensions.txt  манифест расширений pi (используется 'pibox extensions install')
 #   models.json     конфиг моделей (копируется только если нет;
 #                   НИКОГДА не перезаписывается — там API-ключи пользователя)
 #
@@ -16,6 +17,8 @@
 #     установка = обновление, build-контекст — точное зеркало исходников
 #   - env/* не трогается; с --force ВСЕ окружения удаляются
 #     (default пересоздаётся из свежего шаблона)
+#   - env/extensions.txt копируется только если отсутствует (пользователь
+#     может редактировать свой набор расширений)
 #
 # Опции:
 #   -d, --dir PATH     целевая директория (дефолт: ~/pibox или $PIBOX_DIR)
@@ -36,10 +39,13 @@ PIBOX_DIR="${PIBOX_DIR:-$HOME/pibox}"
 
 # --- Хелперы ---------------------------------------------------------------
 
-log()  { echo "==> pibox: $*" >&2; }
+log() { echo "==> pibox: $*" >&2; }
 warn() { echo "pibox: warn:  $*" >&2; }
-err()  { echo "pibox: error: $*" >&2; }
-die()  { err "$*"; exit 1; }
+err() { echo "pibox: error: $*" >&2; }
+die() {
+    err "$*"
+    exit 1
+}
 
 usage() {
     cat <<EOF
@@ -79,12 +85,13 @@ safe_rm_rf() {
     [[ -n "$target" ]] || die "safe_rm_rf: пустой путь"
     [[ "$target" != "/" ]] || die "safe_rm_rf: отказ удалять /"
     case "$target" in
-        "$HOME"|"$HOME/"|/usr|/usr/|/etc|/etc/|/var|/var/|/bin|/bin/|/sbin|/sbin/|/opt|/opt/)
-            die "safe_rm_rf: отказ удалять системный путь $target" ;;
+    "$HOME" | "$HOME/" | /usr | /usr/ | /etc | /etc/ | /var | /var/ | /bin | /bin/ | /sbin | /sbin/ | /opt | /opt/)
+        die "safe_rm_rf: отказ удалять системный путь $target"
+        ;;
     esac
     # Разрешаем только то, что лежит внутри PIBOX_DIR (не сам PIBOX_DIR)
-    [[ "$target" == "$PIBOX_DIR"/* ]] \
-        || die "safe_rm_rf: $target вне PIBOX_DIR ($PIBOX_DIR)"
+    [[ "$target" == "$PIBOX_DIR"/* ]] ||
+        die "safe_rm_rf: $target вне PIBOX_DIR ($PIBOX_DIR)"
     rm -rf -- "$target"
 }
 
@@ -96,38 +103,38 @@ SRC_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        -d|--dir)
-            [[ $# -ge 2 ]] || die "Опция $1 требует аргумент"
-            require_arg "$1" "$2"
-            PIBOX_DIR="$2"
-            shift 2
-            ;;
-        -f|--force)
-            FORCE=1
-            shift
-            ;;
-        --no-path)
-            NO_PATH=1
-            shift
-            ;;
-        --src)
-            [[ $# -ge 2 ]] || die "Опция $1 требует аргумент"
-            require_arg "$1" "$2"
-            [[ -d "$2" ]] || die "Директория исходников не найдена: $2"
-            SRC_DIR="$(cd "$2" && pwd)" || die "Не могу прочитать --src: $2"
-            shift 2
-            ;;
-        -h|--help)
-            usage
-            exit 0
-            ;;
-        -V|--version)
-            echo "pibox installer ${VERSION}"
-            exit 0
-            ;;
-        *)
-            die "Неизвестная опция: $1"
-            ;;
+    -d | --dir)
+        [[ $# -ge 2 ]] || die "Опция $1 требует аргумент"
+        require_arg "$1" "$2"
+        PIBOX_DIR="$2"
+        shift 2
+        ;;
+    -f | --force)
+        FORCE=1
+        shift
+        ;;
+    --no-path)
+        NO_PATH=1
+        shift
+        ;;
+    --src)
+        [[ $# -ge 2 ]] || die "Опция $1 требует аргумент"
+        require_arg "$1" "$2"
+        [[ -d "$2" ]] || die "Директория исходников не найдена: $2"
+        SRC_DIR="$(cd "$2" && pwd)" || die "Не могу прочитать --src: $2"
+        shift 2
+        ;;
+    -h | --help)
+        usage
+        exit 0
+        ;;
+    -V | --version)
+        echo "pibox installer ${VERSION}"
+        exit 0
+        ;;
+    *)
+        die "Неизвестная опция: $1"
+        ;;
     esac
 done
 
@@ -143,8 +150,9 @@ check_target_dir() {
     [[ -n "$PIBOX_DIR" ]] || die "PIBOX_DIR не может быть пустым"
 
     case "$PIBOX_DIR" in
-        /|"$HOME"|"$HOME/"|/usr|/usr/|/etc|/etc/|/var|/var/|/bin|/bin/|/sbin|/sbin/|/opt|/opt/)
-            die "Отказываюсь устанавливать в $PIBOX_DIR" ;;
+    / | "$HOME" | "$HOME/" | /usr | /usr/ | /etc | /etc/ | /var | /var/ | /bin | /bin/ | /sbin | /sbin/ | /opt | /opt/)
+        die "Отказываюсь устанавливать в $PIBOX_DIR"
+        ;;
     esac
 }
 
@@ -177,7 +185,7 @@ check_docker() {
         die "Не удалось разобрать версию Docker: '${docker_version}'"
     fi
 
-    if (( major < 20 || (major == 20 && minor < 10) )); then
+    if ((major < 20 || (major == 20 && minor < 10))); then
         die "Требуется Docker >= 20.10 (найдено: ${docker_version}). Обновите Docker."
     fi
 
@@ -206,6 +214,7 @@ check_sources() {
         ".dockerignore"
         "models.json"
         "env/.template/README.md"
+        "env/extensions.txt"
     )
 
     for file in "${required_files[@]}"; do
@@ -248,7 +257,7 @@ install() {
     #    ВАЖНО: строго ДО обновления env/.template — зачистка сносит весь env/,
     #    включая шаблон; если делать наоборот, шаг 6 упадёт с «cp: cannot stat
     #    .../env/.template/.» (env/default останется пустым, CLI-тесты красные).
-    if (( FORCE == 1 )); then
+    if ((FORCE == 1)); then
         warn "--force: удаляю ВСЕ окружения в ${target_env} (включая default)"
         safe_rm_rf "$target_env"
     fi
@@ -269,7 +278,17 @@ install() {
         log "Окружение default уже существует — пропускаю создание"
     fi
 
-    # 7. models.json — не перезаписывается НИКОГДА (API-ключи пользователя):
+    # 7. Манифест расширений — в env/ (копируется ТОЛЬКО если отсутствует:
+    #    пользователь вправе редактировать свой набор; sed '-i' не нужен —
+    #    файл маленький и одноразовый)
+    if [[ ! -f "$target_env/extensions.txt" ]]; then
+        log "Копирую манифест расширений: extensions.txt → env/"
+        cp "$SRC_DIR/env/extensions.txt" "$target_env/extensions.txt"
+    else
+        log "Манифест env/extensions.txt уже существует — не трогаю"
+    fi
+
+    # 8. models.json — не перезаписывается НИКОГДА (API-ключи пользователя):
     #    копируется только если отсутствует
     if [[ ! -f "$target_models" ]] && [[ -f "$SRC_DIR/models.json" ]]; then
         log "Копирую models.json → models.json"
@@ -278,8 +297,8 @@ install() {
         warn "Не забудьте отредактировать ${target_models} и указать ваши API-ключи."
     fi
 
-    # 8. Добавление в PATH
-    if (( NO_PATH == 0 )); then
+    # 9. Добавление в PATH
+    if ((NO_PATH == 0)); then
         add_to_path
     fi
 
@@ -287,7 +306,9 @@ install() {
     log "Следующие шаги:"
     log "  1. Отредактируйте ${target_models} (укажите API-ключи)"
     log "  2. Соберите образ: pibox build"
-    log "  3. Запустите агента: cd ~/your-project && pibox"
+    log "  3. Установите набор расширений: pibox extensions install   (несколько минут)"
+    log "     (опционально: поправьте свой набор в ${target_env}/extensions.txt)"
+    log "  4. Запустите агента: cd ~/your-project && pibox"
 }
 
 # --- Добавление в PATH ---------------------------------------------------
@@ -297,20 +318,20 @@ add_to_path() {
     local shell_name="${SHELL##*/}"
 
     case "$shell_name" in
-        bash)
-            shell_rc="$HOME/.bashrc"
-            ;;
-        zsh)
-            shell_rc="$HOME/.zshrc"
-            ;;
-        fish)
-            warn "Fish shell обнаружен. Добавьте вручную: fish_add_path ${PIBOX_DIR}/bin"
-            return 0
-            ;;
-        *)
-            warn "Неизвестный shell: ${shell_name}. Добавьте ${PIBOX_DIR}/bin в PATH вручную."
-            return 0
-            ;;
+    bash)
+        shell_rc="$HOME/.bashrc"
+        ;;
+    zsh)
+        shell_rc="$HOME/.zshrc"
+        ;;
+    fish)
+        warn "Fish shell обнаружен. Добавьте вручную: fish_add_path ${PIBOX_DIR}/bin"
+        return 0
+        ;;
+    *)
+        warn "Неизвестный shell: ${shell_name}. Добавьте ${PIBOX_DIR}/bin в PATH вручную."
+        return 0
+        ;;
     esac
 
     # Проверка: если такой путь уже прописан — не дублируем
@@ -327,7 +348,7 @@ add_to_path() {
         echo "# >>> pibox installer >>>"
         echo "export PATH=\"${PIBOX_DIR}/bin:\$PATH\""
         echo "# <<< pibox installer <<<"
-    } >> "$shell_rc"
+    } >>"$shell_rc"
 
     warn "PATH обновлён. Перезапустите shell или выполните: source ${shell_rc}"
 }

@@ -11,6 +11,10 @@
 - `.pi/agent/skills/` — скиллы: `install-languages`, `workspace-hygiene`,
   `networking`.
 
+Расширения pi в шаблон НЕ входят: эталонный набор живёт в манифесте
+`env/extensions.txt` (на уровень выше) и ставится в окружение командой
+`pibox extensions install [-e ИМЯ]` — окружение должно существовать.
+
 Важно: `models.json` сюда НЕ входит — он кладётся в окружение отдельно
 при первом запуске (из `PIBOX_DIR/models.json`).
 

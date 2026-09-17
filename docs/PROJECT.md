@@ -22,10 +22,11 @@ PIBOX — обвязка вокруг [Pi Coding Agent](https://pi.dev/) (npm: `
 | --- | --- |
 | `Dockerfile` | multi-stage: ubuntu 24.04 + node 24 + pi + mise; ARG-версии пинуются |
 | `entrypoint.sh` | от root: подстановка UID/GID хост-юзера → dotfiles-слои (заглушка + `.pibox`/`.user`) → gosu → tini → pi |
-| `run.sh` | исходник CLI `pibox` (после install — `~/pibox/bin/pibox`); подкоманды: run/build/env/shell/doctor |
+| `run.sh` | исходник CLI `pibox` (после install — `~/pibox/bin/pibox`); подкоманды: run/build/env/shell/doctor/extensions |
 | `install.sh` | установщик: создаёт `~/pibox`, bin в PATH, блок `>>> pibox installer >>>` в rc-файле |
 | `models.json` | шаблон конфига моделей (локальный OpenAI-совместимый сервер по умолчанию) |
 | `env/.template/` | шаблон `/home/pi` для новых окружений + стартовые знания агента (`.pi/agent/AGENTS.md`, скиллы `install-languages`, `workspace-hygiene`, `networking`, `extension-hygiene`) |
+| `env/extensions.txt` | манифест расширений pi (`npm:имя@версия`); ставятся `pibox extensions install`, аудит — `doctor` (D9) |
 | `tests/smoke.sh` | ~90 автопроверок: install → build → CLI → runtime; флаги `--offline/--keep/--rebuild` |
 | `agent/glm/` | план разработки и постановки задач (task1..task9) — история, не runtime-код |
 
@@ -72,6 +73,19 @@ CI (`.github/workflows/ci.yml`): shellcheck + проверка exec-битов +
   (−130 МБ: @lancedb и keyring тянут оба варианта, gnu+musl) и
   `rm ~/.pi/agent/npm/node_modules/@llamaindex/liteparse/liteparse.linux-x64-gnu.node`
   (на arm64-хосте; на amd64 он наоборот рабочий — сверяться с `uname -m`).
++ **Расширения pi дистрибутируются манифестом, не бинарниками**: в репо —
+  только `env/extensions.txt` (список `npm:имя@точно-заплиненная-версия`;
+  копируется инсталлером в `~/pibox/env/`, там пользователь может править
+  свой набор). Установка — `pibox extensions install [-e ИМЯ]`: одноразовый
+  контейнер с примонтированным env, по одному `pi install` на пакет;
+  уже установленное совпадающей версии пропускается. Команда НЕ создаёт
+  окружение (строгий контракт: сначала `pibox env create`). Настройка pi
+  (settings.json "packages") дополняется записями "npm:имя" без версий;
+  apache-arrow — runtime-only (в settings.json не попадает, но обязан стоять
+  в node_modules — pi иначе сносит его при следующих установках).
+  `doctor` (D9) сверяет окружение с манифестом. Почему не вендорить
+  node_modules в шаблон: ~500 МБ чужого кода в git + платформенные бинарники
+  в коммите теряют портируемость репо.
 + Файлы окружения (`env/*`, кроме шаблонов) при переустановке не затрагивать.
 + Скрипты — LF-окончания (`.gitattributes` настроен, CRLF ломает `bad interpreter`).
 + Безопасность: контейнер — НЕ полная песочница (сеть открыта, добавлены SYS_PTRACE и NET_RAW,

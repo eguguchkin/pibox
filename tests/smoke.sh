@@ -607,6 +607,92 @@ else
     rm -rf "$NM/@scope" "$NM/@other" "$NM/@wrongarch" "$NM/pkg-darwin-x64" "$NM/@llamaindex"
 fi
 
+# ============================================================================
+# C20: extensions install — манифест, строгие проверки, D9 doctor
+# ============================================================================
+
+group "C20: расширения (манифест + extensions install + doctor D9)"
+
+expect_contains "C20: манифест в установке" "$(cat "$TEST_PIBOX/env/extensions.txt")" "npm:pi-lens@4.1.6"
+
+# без docker-образа команда обязана упасть (проверка образа идёт раньше
+# установок; PIBOX_IMAGE указывает на заведомо отсутствующий образ, чтобы
+# тест не зависел от наличия/отсутствия реального pibox:latest и не запускал
+# настоящих npm-установок)
+if (cd "$TEST_WS" && PIBOX_IMAGE="pibox-smoke-noimage:latest" "$BIN" extensions install >/dev/null 2>&1); then
+    fail "C20: extensions install без образа должен падать"
+else
+    ok "C20: extensions install без образа падает"
+fi
+
+# на отсутствующем окружении — явная ошибка с подсказкой (без автосоздания)
+EXT_ERR="$(cd "$TEST_WS" && "$BIN" extensions install -e no-such-env 2>&1 >/dev/null || true)"
+expect_contains "C20: отсутствующее окружение — ошибка" "$EXT_ERR" "не найдено"
+expect_contains "C20: отсутствующее окружение — подсказка env create" "$EXT_ERR" "pibox env create no-such-env"
+if [ -d "$TEST_PIBOX/env/no-such-env" ]; then
+    fail "C20: окружение не должно создаваться расширениями"
+else
+    ok "C20: окружение не создаётся автоматически"
+fi
+
+# D9: doctor сверяет дерево node_modules с манифестом (нужен jq на хосте)
+if command -v jq >/dev/null 2>&1; then
+    DN9="$TEST_PIBOX/env/smoke-env/.pi/agent/npm/node_modules"
+    N9="$(grep -c '^npm:' "$TEST_PIBOX/env/extensions.txt")" # динамический счётчик — манифест растёт
+    # полная имитация установленного набора: все пакеты манифеста
+    while IFS= read -r line; do
+        line="${line%%\#*}"                     # хвостовой комментарий — до всех проверок
+        line="${line#"${line%%[![:space:]]*}"}" # ltrim
+        line="${line%"${line##*[![:space:]]}"}" # rtrim
+        [ -n "$line" ] || continue
+        name9="${line#npm:}"
+        ver9="${name9##*@}"
+        name9="${name9%@*}"
+        mkdir -p "$DN9/$name9"
+        printf '{"name":"%s","version":"%s"}\n' "$name9" "$ver9" >"$DN9/$name9/package.json"
+    done <"$TEST_PIBOX/env/extensions.txt"
+    # + пакет вне манифеста (ручная установка)
+    mkdir -p "$DN9/someone-custom"
+    printf '{"name":"someone-custom","version":"1.0.0"}\n' >"$DN9/someone-custom/package.json"
+    # settings.json — как их оставляет extensions install: все, кроме runtime-only
+    SJ="$TEST_PIBOX/env/smoke-env/.pi/agent/settings.json"
+    mkdir -p "$(dirname "$SJ")"
+    printf '{"packages":["npm:pi-lens","npm:context-mode"]}\n' >"$SJ"
+
+    D9_OUT="$(cd "$TEST_WS" && "$BIN" doctor -e smoke-env 2>/dev/null)" || true
+    expect_contains "C20: D9 — все из манифеста установлены" "$D9_OUT" "все $N9 из манифеста"
+    expect_contains "C20: D9 — вне манифеста" "$D9_OUT" "вне манифеста"
+    if printf '%s' "$D9_OUT" | grep -qF "в settings.json нет"; then
+        fail "C20: D9 — runtime-only ложно ругается на settings"
+    else
+        ok "C20: D9 — runtime-only не требует settings-записи"
+    fi
+
+    # дрейф версии: pi-lens в дереве до чужой версии
+    printf '{"name":"pi-lens","version":"9.9.9"}\n' >"$DN9/pi-lens/package.json"
+    D9_DRIFT="$(cd "$TEST_WS" && "$BIN" doctor -e smoke-env 2>/dev/null)" || true
+    expect_contains "C20: D9 — дрейф версии обнаружен" "$D9_DRIFT" "версия не совпадает: pi-lens"
+
+    # отсутствие пакета
+    rm -rf "$DN9/@tintinweb"
+    D9_MISS="$(cd "$TEST_WS" && "$BIN" doctor -e smoke-env 2>/dev/null)" || true
+    expect_contains "C20: D9 — отсутствие пакета (FAIL)" "$D9_MISS" "отсутствуют 1 из $N9"
+    # и раз pi-subagents удалён — его и не хватает в settings.json
+    expect_contains "C20: D9 — пакета нет в settings.json" "$D9_MISS" "в settings.json нет"
+
+    # тестовые артефакты — не утекают в следующие проверки
+    rm -f "$SJ"
+    rm -rf "$DN9"
+else
+    skip "C20: D9 — jq не найден"
+fi
+
+# свежее окружение: манифест есть, расширений нет — doctor указывает на установку
+if command -v jq >/dev/null 2>&1; then
+    D9_EMPTY="$(cd "$TEST_WS" && "$BIN" doctor -e smoke-env 2>/dev/null)" || true
+    expect_contains "C20: D9 — нет расширений после чистки" "$D9_EMPTY" "отсутствуют $N9 из $N9"
+fi
+
 # C17: изоляция workspace и PIBOX_DIR
 isolation_check() { # NAME DIR NEEDLE
     local name="$1" dir="$2" needle="$3" out=""
