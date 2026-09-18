@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+# ============================================================================
+# PIBOX — CLI для безопасного запуска Pi Coding Agent в Docker.
+# Точка входа: подгружает модули lib/ в фиксированном порядке и вызывает main.
+# Модульная структура и зависимости — см. docs/PROJECT.md.
+# ============================================================================
+set -euo pipefail
+
+_LIB_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../lib" && pwd)"
+
+# Корень установки (bin/..) — до source модулей: lib/common.sh не должен
+# угадывать PIBOX_DIR по BASH_SOURCE (там путь модуля lib/*.sh, не bin/pibox).
+_PIBOX_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+export PIBOX_DIR="${PIBOX_DIR:-$_PIBOX_ROOT}"
+
+# shellcheck disable=SC1091  # пути фиксируются выше
+for _mod in common.sh env.sh docker-cmd.sh ext-manifest.sh \
+    cmd-run.sh cmd-build.sh cmd-env.sh ext-progress.sh \
+    cmd-extensions.sh cmd-update.sh cmd-doctor.sh main.sh; do
+    # shellcheck source=/dev/null
+    source "$_LIB_DIR/$_mod"
+done
+unset _mod _LIB_DIR
+
+# Точка входа
+trap : INT # SIGINT не должен убивать скрипт до выполнения локальных ловушек
+main "$@"

@@ -48,6 +48,7 @@ PIBOX запускает агента в контейнере и решает т
 | Требование | Проверка |
 | --- | --- |
 | Linux + Docker Engine **≥ 20.10** | `docker --version` |
+| Bash **≥ 3.2** | `bash --version` (дефолтный macOS bash подходит) |
 | Пользователь в группе `docker` | `docker info` без ошибок |
 | ~1.5 ГБ на образ + место под окружения | `df -h ~` |
 
@@ -125,6 +126,7 @@ cd pibox && git pull && ./install.sh
 | `--cpus N` | `2` | Лимит CPU |
 | `--pids-limit N` | `512` | Лимит процессов |
 | `--git-safe` | выкл | `git safe.directory` для workspace |
+| `--keep` | выкл | Оставить контейнер после выхода (для отладки) |
 | `--dry-run` | — | Напечатать `docker run` без запуска |
 | `--name ИМЯ` | auto | Имя контейнера |
 
@@ -273,7 +275,6 @@ php -v; go version           # переживают перезапуск кон�
 | `pip install` падает (`externally-managed`) | PEP 668 в Ubuntu 24.04 — используйте venv: `python3 -m venv .venv && . .venv/bin/activate` |
 | `npm install -g` и root? | Не нужен: `~/.npmrc` задаёт prefix `~/.local`. Без sudo |
 | Первый запуск долгий | Норма: сборка образа + mise качает тулчейны. Дальше — из окружения |
-| Аргументы после `--` с пробелами искажаются | Известное ограничение CLI. Сложные команды — через `pibox shell` |
 | Медленный старт после смены юзера хоста | `find` по env чинит ownership при смене UID; на стабильном хосте не выполняется |
 
 ## Разработка
@@ -284,7 +285,21 @@ php -v; go version           # переживают перезапуск кон�
 pibox/
 ├── Dockerfile          # multi-stage: ubuntu 24.04 + node 24 + pi + mise
 ├── entrypoint.sh       # UID/GID, dotfiles-слои, gosu→tini→pi
-├── run.sh              # исходник CLI (после install — ~/pibox/bin/pibox)
+├── bin/
+│   └── pibox           # точка входа CLI: source lib/* → main
+├── lib/                # модули CLI (source'ятся в фиксированном порядке)
+│   ├── common.sh       # константы, хелперы вывода, usage, проверки
+│   ├── env.sh          # окружения: create/copy_models_json/list
+│   ├── docker-cmd.sh   # сборка docker run команды
+│   ├── cmd-run.sh      # pibox run
+│   ├── cmd-build.sh    # pibox build
+│   ├── cmd-env.sh      # pibox env / pibox shell
+│   ├── ext-manifest.sh # чтение манифеста расширений
+│   ├── ext-progress.sh # TTY-визуализация установки расширений
+│   ├── cmd-extensions.sh # pibox extensions install
+│   ├── cmd-update.sh   # pibox update (заглушка)
+│   ├── cmd-doctor.sh   # pibox doctor (D1–D9)
+│   └── main.sh         # диспетчер подкоманд
 ├── install.sh          # установщик
 ├── models.json         # шаблон конфига моделей
 ├── env/
@@ -308,7 +323,8 @@ pibox/
 ./tests/smoke.sh --rebuild    # пересобрать образ
 PIBOX_IMAGE=pibox:test ./tests/smoke.sh
 
-shellcheck run.sh install.sh entrypoint.sh tests/smoke.sh   # как в CI
+shellcheck install.sh entrypoint.sh bin/pibox lib/*.sh tests/smoke.sh tests/helpers.sh   # как в CI
+shfmt -d -i 4 install.sh entrypoint.sh bin/pibox lib/*.sh tests/smoke.sh tests/helpers.sh  # стиль: 4 пробела, не табы
 ```
 
 Ручная приёмка: `tests/ACCEPTANCE.md` — 7 сценариев (~30 мин).
@@ -322,6 +338,6 @@ shellcheck run.sh install.sh entrypoint.sh tests/smoke.sh   # как в CI
 | `UBUNTU_VERSION` | базовый образ | пиновать LTS (`24.04`) |
 | `NODE_IMAGE` | источник Node | мажор + distro; **glibc builder ≤ runtime** (bookworm ≤ noble — не trixie!) |
 | `PI_VERSION` | `@earendil-works/pi-coding-agent` | точная версия |
-| `MISE_VERSION` | mise | точная версия с GitHub Releases |
+| `MISE_VERSION` | mise | пиновать не требуется (ставится официальным инсталлером) |
 
 После смены: `pibox build --no-cache` + прогон smoke-тестов.

@@ -16,7 +16,16 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y shellcheck
 
       - name: shellcheck
-        run: shellcheck run.sh install.sh entrypoint.sh tests/smoke.sh
+        run: |
+          shellcheck install.sh entrypoint.sh \
+            bin/pibox lib/*.sh \
+            tests/smoke.sh tests/helpers.sh
+
+      - name: "shfmt (стиль: 4 пробела)"
+        run: |
+          go install mvdan.cc/shfmt/v3/cmd/shfmt@latest
+          "$(go env GOPATH)/bin/shfmt" -d -i 4 install.sh entrypoint.sh \
+            bin/pibox lib/*.sh tests/smoke.sh tests/helpers.sh
 
       - name: Исполняемые биты скриптов в git
         run: |

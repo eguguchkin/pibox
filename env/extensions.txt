@@ -16,7 +16,8 @@ npm:@everyx/pi-web-tools@1.2.4
 npm:context-mode@1.0.169
 npm:@tintinweb/pi-subagents@0.19.0
 npm:pi-docparser@4.0.0
-npm:pi-universal-view@0.2.1
 npm:pi-lens@4.1.6
 npm:@yandy0725/pi-memory@1.3.4
 npm:pi-self-learning@0.5.0
+npm:pi-open-tui@0.3.6
+npm:@wierdbytes/pi-facelift@0.6.4

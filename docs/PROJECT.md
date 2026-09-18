@@ -12,7 +12,7 @@ PIBOX — обвязка вокруг [Pi Coding Agent](https://pi.dev/) (npm: `
 2. **Персистентность** — сессии, конфиги, расширения и тулчейны (mise) живут в каталоге
    окружения на хосте и переживают перезапуск. Несколько изолированных окружений
    (`default`, `php8`, `rust`…) через `pibox -e ИМЯ`.
-3. **Компактный образ** — multi-stage сборка (~0.8 ГБ): Ubuntu 24.04 + Node 24 + Pi + mise
+3. **Компактный образ** — multi-stage сборка (~0.7 ГБ): Ubuntu 24.04 + Node 24 + Pi + mise
    + рантайм-зависимости pi-расширений (JRE, tesseract) + shellcheck/shfmt для
    самопроверки скриптов репо.
    Тяжёлые тулчейны агент ставит сам через mise в `~/.local` (персистентно).
@@ -23,12 +23,12 @@ PIBOX — обвязка вокруг [Pi Coding Agent](https://pi.dev/) (npm: `
 | --- | --- |
 | `Dockerfile` | multi-stage: ubuntu 24.04 + node 24 + pi + mise; ARG-версии пинуются |
 | `entrypoint.sh` | от root: подстановка UID/GID хост-юзера → dotfiles-слои (заглушка + `.pibox`/`.user`) → gosu → tini → pi |
-| `run.sh` | исходник CLI `pibox` (после install — `~/pibox/bin/pibox`); подкоманды: run/build/env/shell/doctor/extensions |
+| `bin/pibox` + `lib/` | исходник CLI `pibox` (после install — `~/pibox/bin/pibox` + `~/pibox/lib/`); точка входа подгружает модули в фиксированном порядке: `common.sh` (константы, хелперы, usage, проверки) → `env.sh` (окружения) → `docker-cmd.sh` (сборка docker run) → `ext-manifest.sh` (манифест расширений) → `cmd-*.sh` (подкоманды) → `main.sh` (диспетчер). Зависимости только «вниз», циклов нет |
 | `install.sh` | установщик: создаёт `~/pibox`, bin в PATH, блок `>>> pibox installer >>>` в rc-файле |
 | `models.json` | шаблон конфига моделей (локальный OpenAI-совместимый сервер по умолчанию) |
 | `env/.template/` | шаблон `/home/pi` для новых окружений + стартовые знания агента (`.pi/agent/AGENTS.md`, скиллы `install-languages`, `workspace-hygiene`, `networking`, `extension-hygiene`) |
 | `env/extensions.txt` | манифест расширений pi (`npm:имя@версия`); ставятся `pibox extensions install`, аудит — `doctor` (D9) |
-| `tests/smoke.sh` | ~90 автопроверок: install → build → CLI → runtime; флаги `--offline/--keep/--rebuild` |
+| `tests/smoke.sh` + `tests/helpers.sh` | ~90 автопроверок: install → build → CLI → runtime; флаги `--offline/--keep/--rebuild`; хелперы (счётчики, `expect_*`, `docker_pibox`, очистка) — в `helpers.sh` |
 | `agent/glm/` | план разработки и постановки задач (task1..task9) — история, не runtime-код |
 
 Каталога `docs/` в репо пока нет (упоминается в README, но не создан).
@@ -37,8 +37,8 @@ PIBOX — обвязка вокруг [Pi Coding Agent](https://pi.dev/) (npm: `
 
 + entrypoint ↔ Dockerfile: `/opt/skel` (заглушки + `.pibox`-слои + прочие dot-файлы), маркер `PIBOX_SKELETON_V1` в заглушках, переменные `HOST_UID`/`HOST_GID`, юзер `pi`.
 + entrypoint ↔ файлы home (договор о владельце): весь `/home/pi` — bind-mount хоста, все файлы в нём считаются принадлежащими хост-юзеру (`HOST_UID:HOST_GID`); рекурсивный chown при старте НЕ делается. Владелец чинится только у файлов, копируемых из skel (точечные chown + одноразовый `find -user 0` с `-xdev` внутри первого merge под маркером `.pibox_other_skel_done`). Перенос env между машинами с разным UID — разовый `chown -R` на хосте.
-+ run.sh/install.sh → шаблон: `PIBOX_DIR/env/<name>`, `PIBOX_DIR/models.json`, `PIBOX_DIR/env/.template/`.
-+ install.sh: копирует `run.sh` → `~/pibox/bin/pibox`, build-контекст → `~/pibox/docker/`. Перезапись CLI/docker/.template — при каждом запуске; `--force` дополнительно удаляет ВСЕ окружения (`env/*`); `models.json` не перезаписывается никогда (API-ключи).
++ bin/pibox+lib/install.sh → шаблон: `PIBOX_DIR/env/<name>`, `PIBOX_DIR/models.json`, `PIBOX_DIR/env/.template/`.
++ install.sh: копирует `bin/pibox` + `lib/` (каталог целиком, mirror-механизм как у `docker/`) → `~/pibox/`, build-контекст → `~/pibox/docker/`. Перезапись CLI+lib/docker/.template — при каждом запуске; `--force` дополнительно удаляет ВСЕ окружения (`env/*`); `models.json` не перезаписывается никогда (API-ключи).
 + Модель API с хоста доступна из контейнера как `http://host.docker.internal:8080`.
 
 ## Как проверять изменения
@@ -46,20 +46,21 @@ PIBOX — обвязка вокруг [Pi Coding Agent](https://pi.dev/) (npm: `
 ```bash
 pibox build                    # или docker build
 ./tests/smoke.sh               # полный прогон ~2 мин; --offline / --keep / --rebuild
-shellcheck run.sh install.sh entrypoint.sh tests/smoke.sh   # так же в CI
-shfmt -d -i 4 run.sh install.sh entrypoint.sh tests/smoke.sh  # стиль: 4 пробела, не табы
+shellcheck install.sh entrypoint.sh bin/pibox lib/*.sh tests/smoke.sh tests/helpers.sh   # так же в CI
+shfmt -d -i 4 install.sh entrypoint.sh bin/pibox lib/*.sh tests/smoke.sh tests/helpers.sh  # стиль: 4 пробела, не табы
 ```
 
 CI (`.github/workflows/ci.yml`): shellcheck + проверка exec-битов + docker build.
 
 ## Правила и подводные камни
 
-+ **Прямой запуск `./run.sh` из чекаута создаёт окружения прямо в репо**
-  (`env/<имя>`, дефолт PIBOX_DIR = каталог скрипта). Для экспериментов — либо
-  `PIBOX_DIR=/tmp/pibox-test ./run.sh ...`, либо чистить env/ перед коммитом
++ **Прямой запуск `bin/pibox` из чекаута создаёт окружения прямо в репо**
+  (`env/<имя>`, дефолт PIBOX_DIR = каталог репо). Для экспериментов — либо
+  `PIBOX_DIR=/tmp/pibox-test ./bin/pibox ...`, либо чистить env/ перед коммитом
   (git игнорирует env/*, мусор легко не заметить).
 
-+ Версии в Dockerfile: пиновать точные; Node builder (glibc) ≤ runtime (bookworm ≤ noble, не trixie).
++ Версии в Dockerfile: пиновать точные (кроме mise — ставится официальным инсталлером,
+  пиновка не требуется); Node builder (glibc) ≤ runtime (bookworm ≤ noble, не trixie).
   Исключений нет: npm-кэш живёт в `~/.npm` (персистентен в env).
 + **Рантайм-зависимости pi-расширений в образе** (не тулчейны для агента — инвариант №4
   не задет, через mise их не поставить): `default-jre-headless` — рантайм для
@@ -111,8 +112,7 @@ CI (`.github/workflows/ci.yml`): shellcheck + проверка exec-битов +
   код расширений выполняется с правами агента). API-ключи — через `-E VAR`/`--env-file`.
 + Запуск pibox из самого `~/pibox` блокируется (защита от саморедактирования).
 + Порты <1024 внутри контейнера недоступны (нет CAP_NET_BIND_SERVICE) — маппить наружу.
-+ Известные ограничения: capabilities сбрасываются после gosu (strace -p, tcpdump от pi),
-  аргументы после `--` собираются в строку (пробелы искажаются).
++ Известные ограничения: capabilities сбрасываются после gosu (strace -p, tcpdump от pi).
 + **Шаблон несёт стартовые знания агента** (`env/.template/.pi/agent/`): глобальный
   AGENTS.md и скиллы. Каждое новое окружение сразу «обучено». Копии: при изменении
   скиллов/инструкций обновлять в обоих местах — home текущего окружения

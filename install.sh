@@ -3,7 +3,8 @@
 # PIBOX — установщик.
 #
 # Разворачивает рабочую инсталляцию в PIBOX_DIR (по умолчанию ~/pibox):
-#   bin/pibox       CLI (копия run.sh)
+#   bin/pibox       CLI — точка входа (подгружает lib/)
+#   lib/            модули CLI (копируются целиком, зеркало исходников)
 #   docker/         build-контекст (Dockerfile, entrypoint.sh, .dockerignore)
 #   env/.template/  шаблон для новых окружений (имя с точкой — glob '*' его не матчит,
 #                   поэтому 'env list' и 'env remove' шаблон не видят)
@@ -13,7 +14,7 @@
 #                   НИКОГДА не перезаписывается — там API-ключи пользователя)
 #
 # Идемпотентность:
-#   - bin/pibox, docker/ и env/.template/ перезаписываются ВСЕГДА:
+#   - bin/pibox + lib/, docker/ и env/.template/ перезаписываются ВСЕГДА:
 #     установка = обновление, build-контекст — точное зеркало исходников
 #   - env/* не трогается; с --force ВСЕ окружения удаляются
 #     (default пересоздаётся из свежего шаблона)
@@ -156,9 +157,13 @@ check_target_dir() {
     esac
 }
 
-# 1. Проверка bash
+# 1. Проверка bash (достаточно 3.2 — дефолтный macOS bash; код CLI/тестов
+# написан без bash4+ конструкций: без ассоц. массивов и отрицательных индексов)
 if ! command -v bash >/dev/null 2>&1; then
-    die "bash не найден. Установите bash >= 4.0"
+    die "bash не найден"
+fi
+if [ "$((BASH_VERSINFO[0] * 100 + BASH_VERSINFO[1]))" -lt 302 ]; then
+    die "требуется bash >= 3.2 (найдено ${BASH_VERSION})"
 fi
 
 # 2. Проверка Docker >= 20.10
@@ -208,7 +213,19 @@ check_write_access() {
 # 4. Проверка исходников
 check_sources() {
     local required_files=(
-        "run.sh"
+        "bin/pibox"
+        "lib/common.sh"
+        "lib/docker-cmd.sh"
+        "lib/cmd-build.sh"
+        "lib/cmd-doctor.sh"
+        "lib/cmd-env.sh"
+        "lib/cmd-extensions.sh"
+        "lib/cmd-run.sh"
+        "lib/cmd-update.sh"
+        "lib/env.sh"
+        "lib/ext-manifest.sh"
+        "lib/ext-progress.sh"
+        "lib/main.sh"
         "Dockerfile"
         "entrypoint.sh"
         ".dockerignore"
@@ -238,10 +255,14 @@ install() {
     # 1. Создание структуры директорий
     mkdir -p "$target_bin" "$target_docker" "$target_env_template" "$target_env"
 
-    # 2. Копирование CLI (run.sh → bin/pibox) — всегда: установка = обновление
-    log "Копирую CLI: run.sh → bin/pibox"
-    cp "$SRC_DIR/run.sh" "$target_bin/pibox"
+    # 2. Копирование CLI (bin/pibox + lib/) — всегда: установка = обновление
+    log "Копирую CLI: bin/pibox + lib/"
+    cp "$SRC_DIR/bin/pibox" "$target_bin/pibox"
     chmod 755 "$target_bin/pibox"
+    # lib/ — точное зеркало исходников (чужие/устаревшие модули не выживают)
+    safe_rm_rf "$PIBOX_DIR/lib"
+    mkdir -p "$PIBOX_DIR/lib"
+    cp "$SRC_DIR"/lib/*.sh "$PIBOX_DIR/lib/"
 
     # 3. Build-контекст — всегда точное зеркало исходников (сборка должна
     # соответствовать репо; чужие/устаревшие файлы в docker/ не выживают)
