@@ -148,19 +148,40 @@ cmd_extensions() {
             else
                 printf '  pi install %s\n' "$entry" >&2
             fi
-            # if-обёртка гасит errexit/pipefail от docker-провала. Читатель НЕ
-            # рисует — только пишет в full.log и в окно; рисует один таймер.
-            # Атомарность дописывания: одиночный printf со встроенными \n.
-            if docker run --rm \
-                -e "HOST_UID=$(id -u)" -e "HOST_GID=$(id -g)" \
-                -v "$env_dir:/home/pi" \
-                "$IMAGE_NAME" pi install "$entry" 2>&1 | while IFS= read -r line; do
-                printf '%s\n' "$line" >>"$fulllog"
-                _ext_strip_ansi <<<"$line" | sed 's/^/  │ /' >>"$winfile"
-            done; then
+            # Одна повторная попытка: типичная причина сбоя — разовый сетевой
+            # таймаут при скачивании пребилдов нативных пакетов (напр.
+            # prebuild-install у better-sqlite3 в context-mode). Fallback на
+            # компиляцию невозможен (gcc вне образа), поэтому повтор — самый
+            # дешёвый способ добить транзиентные сбои.
+            local attempt ok_install=0
+            for attempt in 1 2; do
+                if [[ $attempt -eq 2 ]]; then
+                    printf '\n--- сбой, повторяю попытку ---\n\n' >>"$fulllog"
+                    if [[ $tty_render -ne 1 ]]; then
+                        warn "не удалось установить: $entry — повторяю"
+                    fi
+                fi
+                # if-обёртка гасит errexit/pipefail от docker-провала. Читатель НЕ
+                # рисует — только пишет в full.log и в окно; рисует один таймер.
+                # Атомарность дописывания: одиночный printf со встроенными \n.
+                if docker run --rm \
+                    -e "HOST_UID=$(id -u)" -e "HOST_GID=$(id -g)" \
+                    -v "$env_dir:/home/pi" \
+                    "$IMAGE_NAME" pi install "$entry" 2>&1 | while IFS= read -r line; do
+                    printf '%s\n' "$line" >>"$fulllog"
+                    _ext_strip_ansi <<<"$line" | sed 's/^/  │ /' >>"$winfile"
+                done; then
+                    ok_install=1
+                    break
+                fi
+            done
+            if [[ $ok_install -eq 1 ]]; then
                 installed=$((installed + 1))
                 ok_color=32
                 ok_line="✓ $EXT_NAME@$EXT_VER"
+                if [[ $attempt -eq 2 ]]; then
+                    ok_line="$ok_line (со 2-й попытки)"
+                fi
             else
                 failed=$((failed + 1))
                 ok_color=31

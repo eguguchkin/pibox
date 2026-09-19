@@ -465,6 +465,24 @@ group "C20: расширения (манифест + extensions install + doctor
 
 expect_contains "C20: манифест в установке" "$(cat "$TEST_PIBOX/env/extensions.txt")" "npm:pi-lens@4.1.6"
 
+# регрессия: инлайн-комментарий с вторым '#' (напр. "[Image #N]") не должен
+# попадать в запись — раньше ${line%\#*} обрезал по ПОСЛЕДНЕМУ '#', и мусор
+# уходил в pi install (npm error ERR_INVALID_URL)
+if bash -c '
+    PIBOX_DIR="$1"
+    # shellcheck source=/dev/null
+    source "$PIBOX_DIR/lib/ext-manifest.sh"
+    load_extensions_manifest
+    [ "${#EXT_ENTRIES[@]}" -gt 0 ] || exit 1
+    for e in "${EXT_ENTRIES[@]}"; do
+        case "$e" in *"#"*) exit 1 ;; esac
+    done
+' "$TEST_PIBOX"; then
+    ok "C20: инлайн-комментарии манифеста срезаны до первого '#'"
+else
+    fail "C20: в записях манифеста остался мусор от инлайн-комментариев"
+fi
+
 # без docker-образа команда обязана упасть (проверка образа идёт раньше
 # установок; PIBOX_IMAGE указывает на заведомо отсутствующий образ, чтобы
 # тест не зависел от наличия/отсутствия реального pibox:latest и не запускал

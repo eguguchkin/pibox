@@ -12,7 +12,8 @@ load_extensions_manifest() {
     local line
     while IFS= read -r line || [[ -n "$line" ]]; do
         [[ "$line" == \#* ]] && continue # строка-комментарий целиком
-        line="${line%\#*}"               # хвостовой комментарий
+        line="${line%%\#*}"              # хвостовой комментарий (до ПЕРВОГО '#':
+        # в комментарии может быть ещё '#', напр. [Image #N])
         # нормализуем пробелы по краям
         line="${line#"${line%%[![:space:]]*}"}"
         line="${line%"${line##*[![:space:]]}"}"
