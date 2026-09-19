@@ -68,13 +68,19 @@ cmd_shell() {
     # Персистентный кэш jiti — как в build_docker_run_cmd; mkdir от хост-юзера.
     mkdir -p "$PIBOX_DIR/env/$env_name/.cache/jiti"
 
+    # Проект — в подкаталог по имени (workspace_path из common.sh), cwd — туда же.
+    local ws_path
+    ws_path="$(workspace_path)"
+    mkdir -p "$PIBOX_DIR/env/$env_name/workspace/$(workspace_name)"
+
     log "Запуск оболочки в окружении '$env_name'..."
     docker run --rm -it \
         --cap-add SYS_PTRACE --cap-add NET_RAW \
         -e HOST_UID="$(id -u)" -e HOST_GID="$(id -g)" \
         -e PIBOX_GIT_SAFE="${PIBOX_GIT_SAFE:-0}" \
         -v "$PIBOX_DIR/env/$env_name:/home/pi" \
-        -v "$(pwd):/home/pi/workspace" \
+        -v "$(pwd):${ws_path}" \
+        -w "$ws_path" \
         -v "$PIBOX_DIR/env/$env_name/.cache/jiti:/tmp/jiti" \
         "$IMAGE_NAME" bash
 }

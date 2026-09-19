@@ -18,11 +18,13 @@ description: Гигиена расширений pi в ~/.pi/agent/npm — по�
 1. Прогони «Обследование» (ниже) и сообщи одной строкой: «найдено мусора на
    N МБ — почистить?» Не удаляй без подтверждения.
 2. Если в выводе установки было `removed N packages` — npm отреваншил дерево
-   по package.json/lock и мог вычистить вручную поставленные peer-зависимости
-   (реальный случай: пропал `apache-arrow`, сломался pi-mem). Проверь, что
-   критичные пакеты живы (импорт из node_modules), при потере ставь явной
-   зависимостью: `npm install <pkg>` в `~/.pi/agent/npm` — тогда реванш
-   больше не вычистит.
+   по package.json/lock. Проверь, что критичные пакеты живы (импорт из
+   node_modules — см. Шаг 4). Peer-зависимости, которые действительно нужны
+   активным расширениям, ставь явной зависимостью: `npm install <pkg>` в
+   `~/.pi/agent/npm` — тогда реванш больше не вычистит. Но сначала убедись,
+   что пакет нужен **сейчас**: не тащи в package.json мёртвые пиры от
+   удалённых расширений (реальный случай: apache-arrow держали как peer
+   lancedb после того, как lancedb из окружения уже не было).
 
 ## Шаг 1. Обследование (ничего не удалять)
 
@@ -69,15 +71,31 @@ npm cache clean --force                         # ~/.npm/_cacache
 
 ## Шаг 4. Верификация (обязательно после удаления)
 
+Список проверяемых пакетов = нативные/критичные зависимости **активных**
+расширений (на 2026-09: context-mode → better-sqlite3; pi-docparser →
+liteparse; pi-lens → ast-grep). Перед удалением чего-либо убедись, что его
+никто не использует:
+
+```bash
+cd ~/.pi/agent/npm
+# кто объявляет пакет зависимостью (в верхнеуровневом дереве)
+for pj in $(find node_modules -maxdepth 3 -name package.json); do
+  jq -r --arg p "<pkg>" 'select((.dependencies[$p]//.peerDependencies[$p]//.optionalDependencies[$p])!=null) | input_filename' "$pj" 2>/dev/null
+done
+# живой код расширений, ссылающийся на пакет
+grep -rln "<pkg>" node_modules/*/extensions node_modules/@*/*/extensions 2>/dev/null
+```
+
+Верификация живости:
+
 ```bash
 cd ~/.pi/agent/npm && node -e "
 (async () => {
   const t = async (n, f) => { try { await f(); console.log('OK ' + n); }
     catch (e) { console.log('FAIL ' + n + ': ' + e.message.slice(0, 80)); } };
-  await t('lancedb', async () => (await import('@lancedb/lancedb')).connect('~/.pi-mem/lancedb'));
   await t('better-sqlite3', () => import('better-sqlite3'));
-  await t('apache-arrow', () => import('apache-arrow'));
   await t('liteparse', () => import('@llamaindex/liteparse'));
+  await t('ast-grep', () => import('@ast-grep/napi'));
 })()"
 ~/.pi/agent/npm/node_modules/@ast-grep/cli-linux-arm64-gnu/sg --version
 ```
@@ -87,14 +105,15 @@ cd ~/.pi/agent/npm && node -e "
 
 ## Известные случаи (справочник)
 
-- `@lancedb/lancedb-linux-arm64-musl` — 129M дубль на arm64-glibc.
-- `@napi-rs/keyring-linux-arm64-musl` — 3.1M дубль.
 - `@llamaindex/liteparse`: в основном пакете лежат x64 `*.node` и
   `libpdfium.so` (езут всем по `files` в package.json); работает через
   платформенный пакет `@llamaindex/liteparse-linux-<arch>-gnu` со своими
   копиями. X64-файлы в основном пакете на arm64 — балласт.
-- Peer-зависимости (`apache-arrow` для lancedb, `typebox` и др.) — уязвимы к
-  реваншу npm; держать явными зависимостями в `~/.pi/agent/npm/package.json`.
+- `better-sqlite3` — явная зависимость context-mode (FTS5-база сессий),
+  нативный модуль; не удалять, проверять живость после реванша.
+- Общие правила для peer-зависимостей (`typebox` и др.): уязвимы к реваншу
+  npm, но держать явными в `~/.pi/agent/npm/package.json` только те, которые
+  реально используют активные расширения.
 
 ## Если расширение сломалось
 

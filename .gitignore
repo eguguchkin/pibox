@@ -16,7 +16,6 @@ tests/.results/
 Thumbs.db
 
 # Редакторы и агенты
-.pi
 .idea/
 .vscode/
 *.swp

@@ -26,7 +26,7 @@ mise use -g go@latest
 mise use -g php@8.3 rust@stable python@3.12
 
 # для ПРОЕКТА (создаёт mise.toml в cwd — версия фиксируется для всей команды):
-cd /home/pi/workspace && mise use go@1.22
+cd /home/pi/workspace/<проект> && mise use go@1.22
 
 # диагностика:
 mise ls          # что установлено
@@ -49,8 +49,9 @@ tsc -v                    # бинарник попадёт в ~/.local/bin (у�
 
 ### Пакеты с нативной сборкой — через mise, НЕ через npm -g
 
-Если пакет тянет node-gyp/tree-sitter (ошибки вида `gyp ERR! not found: make`,
-`gyp ERR! stack Error`): в образе нет `make`/`gcc`, а apt недоступен. Пример:
+Если пакет тянет node-gyp/tree-sitter (ошибки вида `gyp ERR!`, `gcc:
+command not found`): в образе `make` есть, но `gcc` нет, и apt недоступен.
+Пример:
 `@tobilu/qmd` (зависимости tree-sitter-*). Решение:
 
 ```bash

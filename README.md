@@ -29,7 +29,7 @@ PIBOX запускает агента в контейнере и решает т
 ```
 ХОСТ-МАШИНА                                КОНТЕЙНЕР pibox:latest
 ┌───────────────────────────┐              ┌───────────────────────────────┐
-│ ~/my-project              │  bind-mount  │ /home/pi/workspace            │
+│ ~/my-project              │  bind-mount  │ /home/pi/workspace/my-project │
 │ (текущий каталог)         │─────────────►│  агент стартует здесь         │
 │                           │              │                               │
 │ ~/pibox/env/<name>        │  bind-mount  │ /home/pi (весь home)          │

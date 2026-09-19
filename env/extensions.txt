@@ -6,18 +6,16 @@
 # Формат: по одному пакету на строку, источник npm, версия запиненна точно
 # (воспроизводимость окружений; осознанный апдейт = правка строки + git diff).
 # Комментарии (строки с #) и пустые строки игнорируются.
-#
-# Два независимых memory-расширения (@yandy0725/pi-memory,
-# pi-self-learning) грузятся параллельно; при конфликте инструментов
-# одно из них отключается в settings.json окружения.
 
-npm:pi-mcp-adapter@2.34.0
-npm:@everyx/pi-web-tools@1.2.4
-npm:context-mode@1.0.169
-npm:@tintinweb/pi-subagents@0.19.0
-npm:pi-docparser@4.0.0
-npm:pi-lens@4.1.6
-npm:@yandy0725/pi-memory@1.3.4
-npm:pi-self-learning@0.5.0
-npm:pi-open-tui@0.3.6
-npm:@wierdbytes/pi-facelift@0.6.4
+npm:pi-mcp-adapter@2.34.0                # шлюз Model Context Protocol: MCP-серверы, тулы и авторизация
+npm:@everyx/pi-web-tools@1.2.4           # веб-инструменты: поиск и загрузка URL в Markdown, несколько провайдеров
+npm:context-mode@1.0.169                 # экономия контекста: песочница кода, FTS5-база знаний, поиск
+npm:@tintinweb/pi-subagents@0.19.0       # субагенты как в Claude Code: параллель, оркестрация, workflow
+npm:pi-docparser@4.0.0                   # понимание документов: PDF, DOCX, PPTX, XLSX, OCR, скриншоты
+npm:pi-lens@4.1.6                        # обратная связь по коду: LSP, линтеры, форматтеры, структурный анализ
+npm:@yandy0725/pi-memory@1.3.4           # персистентная память на файловой системе, сохраняется между сессиями
+npm:pi-loop-police@1.14.1                # ловит бесконечные циклы размышлений и вызовов тулов, прерывает до слива контекста
+npm:@tyanyin/pi-loop-guard@0.1.0         # защита от death-loop: предупреждает и блокирует одинаковые повторные вызовы
+npm:@capdiem/pi-repetition-guard@0.3.2   # детектор повтора текста моделью в стриме: аборт и корректирующий руль
+npm:pi-open-tui@0.3.6                    # оформленная TUI: анимированная шапка, футер, редактор с метаданными модели
+npm:@wierdbytes/pi-facelift@0.6.4        # косметика вывода инструментов: рамки, подсветка чтения, сводки bash

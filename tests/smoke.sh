@@ -220,9 +220,12 @@ expect_ok "B2: mise --version" docker run --rm "$IMAGE" mise --version
 expect_ok "B2: node --version" docker run --rm "$IMAGE" node --version
 expect_ok "B2: npm --version" docker run --rm "$IMAGE" npm --version
 expect_ok "B3: инструменты глобально в PATH" docker run --rm "$IMAGE" \
-    bash -c 'command -v pi node npm mise gosu tini jq yq rg xxd git python3'
+    bash -c 'command -v pi node npm mise gosu tini jq yq rg xxd git python3 make'
+# Переменные в строках bash -c намеренно раскрываются bash-ом контейнера
+# shellcheck disable=SC2016
 expect_ok "B4: тяжёлых тулчейнов в образе нет" docker run --rm "$IMAGE" \
     bash -c 'for t in gcc gdb rustc cargo cmake valgrind strace tcpdump; do command -v "$t" && exit 1; done; exit 0'
+# shellcheck disable=SC2016
 expect_ok "B5: пользователь pi (uid 1000) и /opt/skel" docker run --rm "$IMAGE" \
     bash -c '[ "$(id -u pi)" = 1000 ] && [ -f /opt/skel/.bashrc ] && [ -f /opt/skel/.profile ]'
 
@@ -252,7 +255,8 @@ expect_contains "C6: --memory (дефолт)" "$DRY" "--memory 4g"
 expect_contains "C6: --cpus (дефолт)" "$DRY" "--cpus 2"
 expect_contains "C6: --pids-limit (дефолт)" "$DRY" "--pids-limit 512"
 expect_contains "C7: mount окружения" "$DRY" "-v $TEST_PIBOX/env/default:/home/pi"
-expect_contains "C8: mount workspace" "$DRY" "-v $TEST_WS:/home/pi/workspace"
+expect_contains "C8: mount workspace (в подкаталог по имени)" "$DRY" "-v $TEST_WS:$WS_IN_CONTAINER"
+expect_contains "C8: cwd контейнера = подкаталог проекта" "$DRY" "-w $WS_IN_CONTAINER"
 expect_contains "C9: HOST_UID передаётся" "$DRY" "-e HOST_UID=$HOST_UID"
 expect_contains "C9: HOST_GID передаётся" "$DRY" "-e HOST_GID=$HOST_GID"
 if [ -f "$TEST_PIBOX/env/default/.pi/agent/models.json" ]; then
@@ -368,9 +372,11 @@ FAKEBIN="$TEST_ROOT/fakebin"
 mkdir -p "$FAKEBIN"
 printf '#!/bin/sh\nexit 1\n' >"$FAKEBIN/docker"
 chmod +x "$FAKEBIN/docker"
-PATH="$FAKEBIN:$PATH" "$BIN" doctor >/dev/null 2>&1 &&
-    { fail "C19: doctor без docker должен падать"; } ||
+if PATH="$FAKEBIN:$PATH" "$BIN" doctor >/dev/null 2>&1; then
+    fail "C19: doctor без docker должен падать"
+else
     ok "C19: doctor без docker падает"
+fi
 
 # C19: doctor на отсутствующем окружении
 if (cd "$TEST_WS" && "$BIN" doctor -e no-such-env >/dev/null 2>&1); then
@@ -470,6 +476,7 @@ else
 fi
 
 # на отсутствующем окружении — явная ошибка с подсказкой (без автосоздания)
+# shellcheck disable=SC2015  # || true — защита от set -e: ошибка ожидается
 EXT_ERR="$(cd "$TEST_WS" && "$BIN" extensions install -e no-such-env 2>&1 >/dev/null || true)"
 expect_contains "C20: отсутствующее окружение — ошибка" "$EXT_ERR" "не найдено"
 expect_contains "C20: отсутствующее окружение — подсказка env create" "$EXT_ERR" "pibox env create no-such-env"
@@ -575,15 +582,18 @@ capture_eq "R1: id -g = хостовому" "$HOST_GID" \
 
 # --- R2: владение файлами в workspace ---
 expect_ok "R2: файл создаётся в workspace" \
-    docker_pibox "$ENV_UID" "$TEST_WS" -- bash -c 'echo from-container > /home/pi/workspace/from-container.txt'
+    docker_pibox "$ENV_UID" "$TEST_WS" -- bash -c "echo from-container > $WS_IN_CONTAINER/from-container.txt"
 expect_eq "R2: владелец файла = хост-пользователь (не root)" "$HOST_UID" \
     "$(file_owner "$TEST_WS/from-container.txt")"
 
 # --- R3: HOME / USER / PATH ---
+# shellcheck disable=SC2016  # $HOME раскрывается внутри контейнера
 capture_eq "R3: HOME=/home/pi" "/home/pi" \
     docker_pibox "$ENV_UID" "$TEST_WS" -- bash -c 'printf %s "$HOME"'
+# shellcheck disable=SC2016  # $USER раскрывается внутри контейнера
 capture_eq "R3: USER=pi" "pi" \
     docker_pibox "$ENV_UID" "$TEST_WS" -- bash -c 'printf %s "$USER"'
+# shellcheck disable=SC2016  # $PATH раскрывается внутри контейнера
 PATH_OUT="$(docker_pibox "$ENV_UID" "$TEST_WS" -- bash -c 'printf %s "$PATH"' 2>/dev/null || true)"
 expect_contains "R3: PATH содержит mise-шимы" "$PATH_OUT" ".local/share/mise/shims"
 
@@ -631,6 +641,7 @@ expect_fail "R10: отказ при нечисловом HOST_UID" \
     docker run --rm -e HOST_UID=abc -e HOST_GID=1000 "$IMAGE" true
 
 # --- R11: git safe.directory (передача GIT_CONFIG_*) ---
+# shellcheck disable=SC2016  # GIT_CONFIG_* экспортирует entrypoint внутри контейнера
 capture_eq "R11: PIBOX_GIT_SAFE=1 экспортирует GIT_CONFIG_*" "1|*" \
     docker_pibox "$ENV_UID" "$TEST_WS" -e PIBOX_GIT_SAFE=1 -- \
     bash -c 'printf "%s|%s" "$GIT_CONFIG_COUNT" "$GIT_CONFIG_VALUE_0"'
@@ -640,7 +651,7 @@ if command -v git >/dev/null 2>&1; then
 
     expect_ok "R11: git status в workspace (репо с хоста, safe.directory)" \
         docker_pibox "$ENV_UID" "$TEST_WS" -e PIBOX_GIT_SAFE=1 -- \
-        git -C /home/pi/workspace/gitrepo status
+        git -C "$WS_IN_CONTAINER/gitrepo" status
     expect_ok "R11: git есть в контейнере" \
         docker_pibox "$ENV_UID" "$TEST_WS" -- git --version
 else
@@ -766,7 +777,7 @@ docker rm -f "$PORT_NAME" >/dev/null 2>&1 || true
 # --- R19: end-to-end (окружение, созданное CLI) ---
 if [ -d "$ENV_E2E" ]; then
     capture_eq "R19: файл workspace виден в контейнере" "probe-content" \
-        docker_pibox "$ENV_E2E" "$TEST_WS" -- cat /home/pi/workspace/probe.txt
+        docker_pibox "$ENV_E2E" "$TEST_WS" -- cat "$WS_IN_CONTAINER/probe.txt"
     expect_ok "R19: models.json из CLI-окружения доступен в контейнере" \
         docker_pibox "$ENV_E2E" "$TEST_WS" -- test -f /home/pi/.pi/agent/models.json
 else

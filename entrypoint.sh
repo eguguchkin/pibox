@@ -212,6 +212,11 @@ prepare_env() {
     # PATH: user-local bin + mise shims + системные пути.
     # Дублируем ENV из Dockerfile — на случай, если что-то его очистило.
     export PATH="${PI_HOME}/.local/bin:${PI_HOME}/.local/share/mise/shims:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+
+    # Дефолты расширений: задаём, только если не передано извне
+    # (pibox -E FACELIFT_MAX_PREVIEW_LINES=... или --env-file).
+    # pi-facelift: максимум строк предпросмотра в выводе инструментов.
+    export FACELIFT_MAX_PREVIEW_LINES="${FACELIFT_MAX_PREVIEW_LINES:-24}"
 }
 
 # --- 6. Передача управления ----------------------------------------------------

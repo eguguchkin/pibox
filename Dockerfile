@@ -54,12 +54,17 @@ LABEL org.opencontainers.image.title="pibox" \
 #   tesseract-ocr + eng/rus     — встроенный OCR для pi-docparser
 #                                 (document_parse: ocrLanguage/tessdataPath);
 #                                 поставить в рантайме нельзя (apt/sudo нет)
+#   make                        — сборочная утилита для node-gyp (нативные
+#                                 npm-модули). gcc остаётся вне образа
+#                                 (инвариант №4) — полные native-сборки
+#                                 по-прежнему через mise (см. AGENTS.md)
 RUN apt-get update \
  && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
       ca-certificates locales tzdata lsb-release gosu tini \
       less grep sed gawk diffutils file xxd procps psmisc tmux \
       curl wget openssl iproute2 iputils-ping openssh-client dnsutils lsof \
       git tar gzip unzip zip rsync bzip2 xz-utils zstd lz4 \
+      make \
       python3 python3-pip python3-venv \
       jq ripgrep yq vim htop ncdu hexedit \
       shellcheck shfmt \

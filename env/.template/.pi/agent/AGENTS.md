@@ -8,8 +8,9 @@
 - **Нет root и sudo** — ты работаешь от `pi` (UID/GID = хост-юзеру). `apt install` недоступен.
 - **Персистентны только `$HOME` (/home/pi) и /home/pi/workspace** — bind-mounts с хоста.
   Всё остальное (включая /usr, /etc и установленные apt-пакеты) сбрасывается при перезапуске.
-- `/home/pi/workspace` — каталог пользователя на хосте, ЕДИНСТВЕННОЕ место с его данными.
-  Не удалять без явной просьбы. Подробности — скилл workspace-hygiene.
+- `/home/pi/workspace/<имя_проекта>` (твой cwd) — bind-mount каталога запуска на хосте,
+  ЕДИНСТВЕННОЕ место с данными пользователя. Не удалять без явной просьбы.
+  Подробности — скилл workspace-hygiene.
 - Файлы, которые ты создаёшь, принадлежат пользователю хоста — chown не нужен.
 
 ## Установка языков и тулчейнов
@@ -29,6 +30,7 @@ python venv (PEP 668). Детали — скилл install-languages (загру
 ## Сеть
 
 Скилл networking (dev-серверы, порты, host.docker.internal, диагностика). Кратко:
+
 - порт <1024 внутри не открыть; серверы слушать на 0.0.0.0;
 - хост-сервисы — `host.docker.internal` (локальная модель API на хосте —
   `http://host.docker.internal:PORT/v1`).
@@ -39,7 +41,7 @@ python venv (PEP 668). Детали — скилл install-languages (загру
 - `~/.npmrc` нет по умолчанию → первый `npm install -g` может упасть с EACCES —
   `npm config set prefix ~/.local` (см. скилл install-languages).
 - Пакеты с нативной сборкой (node-gyp, tree-sitter) через `npm -g` не ставятся —
-  нет make/gcc; обход: `mise use -g npm:<пакет>` (см. скилл install-languages).
+  make есть в образе, но gcc нет; обход: `mise use -g npm:<пакет>` (см. скилл install-languages).
 - Сеть открыта (если хост не ограничил): curl/wget/git работают.
 - Инструменты: есть curl, dig, nslookup, ss; нет nc, telnet, traceroute, sudo.
 - Capabilities сбрасываются: strace чужих процессов и tcpdump не работают.

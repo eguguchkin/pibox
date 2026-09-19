@@ -133,6 +133,10 @@ cmd_run() {
     # создаст bind-mount-цель от root и pi не сможет туда писать.
     mkdir -p "$PIBOX_DIR/env/$ENV_NAME/.cache/jiti"
 
+    # Точка монтирования проекта (подкаталог по имени): тоже создаём заранее,
+    # иначе docker сделает /home/pi/workspace/<имя> от root внутри env-маунта.
+    mkdir -p "$PIBOX_DIR/env/$ENV_NAME/workspace/$(workspace_name)"
+
     log "Запуск pi в окружении '$ENV_NAME' (контейнер: $CONTAINER_NAME)..."
 
     # Запуск. Ловим код возврата вручную, чтобы set -e не убил скрипт

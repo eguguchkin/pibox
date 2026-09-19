@@ -29,7 +29,12 @@ build_docker_run_cmd() {
 
     # Монтирования
     RUN_CMD+=("-v" "$PIBOX_DIR/env/$ENV_NAME:/home/pi")
-    RUN_CMD+=("-v" "$(pwd):/home/pi/workspace")
+    # Проект — в подкаталог по имени каталога (workspace_path из common.sh),
+    # рабочий каталог контейнера — туда же (перекрывает WORKDIR из Dockerfile)
+    local ws_path
+    ws_path="$(workspace_path)"
+    RUN_CMD+=("-v" "$(pwd):${ws_path}")
+    RUN_CMD+=("-w" "$ws_path")
     # Персистентный кэш jiti (трансляция TS-расширений pi): иначе /tmp/jiti
     # пересоздаётся при каждом запуске и первый старт pi уходит на компиляцию.
     RUN_CMD+=("-v" "$PIBOX_DIR/env/$ENV_NAME/.cache/jiti:/tmp/jiti")

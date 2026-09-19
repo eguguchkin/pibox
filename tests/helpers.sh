@@ -41,8 +41,13 @@ die() {
 SRC_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TEST_ROOT="$(cd "$(mktemp -d "${TMPDIR:-/tmp}/pibox-smoke-XXXXXX")" && pwd)"
 TEST_PIBOX="$TEST_ROOT/pibox"
+# Проект для тестов; basename (my-project) определяет подкаталог внутри контейнера
 # shellcheck disable=SC2034
-TEST_WS="$TEST_ROOT/workspace"
+TEST_WS="$TEST_ROOT/my-project"
+# Путь проекта внутри контейнера — отражает схему монтирования CLI
+# (используется в smoke.sh, общее пространство имён после source)
+# shellcheck disable=SC2034
+WS_IN_CONTAINER="/home/pi/workspace/$(basename "$TEST_WS")"
 BIN="$TEST_PIBOX/bin/pibox"
 IMAGE="${PIBOX_IMAGE:-pibox:latest}"
 HOST_UID="$(id -u)"
@@ -131,6 +136,8 @@ capture_eq() { # NAME EXPECTED CMD... — вывод команды должен
 
 # --- Docker-хелпер: реплика docker run, который собирает CLI --------------------
 # docker_pibox ENV_DIR WS_DIR [DOCKER_OPTS...] -- CMD [ARGS...]
+# Схема монтирования повторяет CLI: проект — в подкаталог по basename,
+# cwd контейнера — туда же.
 
 docker_pibox() {
     local env_dir="$1" ws_dir="$2"
@@ -143,6 +150,9 @@ docker_pibox() {
     [ "${1:-}" = "--" ] || die "docker_pibox: ожидается разделитель --"
     shift
 
+    local ws_name
+    ws_name="$(basename "$ws_dir")"
+
     docker run --rm \
         --add-host host.docker.internal:host-gateway \
         --cap-add SYS_PTRACE \
@@ -150,7 +160,8 @@ docker_pibox() {
         -e "HOST_UID=$HOST_UID" \
         -e "HOST_GID=$HOST_GID" \
         -v "$env_dir:/home/pi" \
-        -v "$ws_dir:/home/pi/workspace" \
+        -v "$ws_dir:/home/pi/workspace/${ws_name}" \
+        -w "/home/pi/workspace/${ws_name}" \
         ${extra[@]+"${extra[@]}"} \
         "$IMAGE" "$@"
 }
