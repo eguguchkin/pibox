@@ -82,6 +82,23 @@ require_arg() {
     [[ "$val" != -* ]] || die "Опция $opt требует значение, а не опцию: $val"
 }
 
+# Аддитивное копирование дерева: файлы кладутся только там, где приёмник
+# ещё пуст; существующее (ключи, правки владельца) не перезаписывается.
+# Не используем `cp -Rn`: BSD cp (macOS 15+) возвращает 1, когда пропустил
+# существующий файл, — под set -e это молча валило повторную установку,
+# а в связке с `|| true` (шаг 8) оставлял свежий env без слоя user.
+additive_copy() {
+    local src="$1" dst="$2" rel
+    while IFS= read -r rel; do
+        rel="${rel#./}"
+        [ -n "$rel" ] || continue
+        if [ ! -e "$dst/$rel" ]; then
+            mkdir -p "$dst/$(dirname "$rel")"
+            cp -a "$src/$rel" "$dst/$rel"
+        fi
+    done < <(cd "$src" && find . -mindepth 1)
+}
+
 # Безопасное удаление внутри PIBOX_DIR.
 # Отказывается удалять /, $HOME, системные каталоги и что-либо вне PIBOX_DIR.
 safe_rm_rf() {
@@ -295,13 +312,13 @@ install() {
     mkdir -p "$target_template/common"
     cp -a "$SRC_DIR/template/common/." "$target_template/common/"
 
-    # 6. СЛОЙ 2 (template/user) — АДДИТИВНО (cp -Rn): новые заглушки доезжают,
+    # 6. СЛОЙ 2 (template/user) — АДДИТИВНО (additive_copy): новые заглушки доезжают,
     #    существующие файлы владельца (в т.ч. ключи) не перезаписываются.
     #    Применяется к окружению при каждом запуске (apply_user_layer).
     if [[ -d "$SRC_DIR/template/user" ]]; then
         log "Копирую template/user/ аддитивно (слой 2: личные инварианты)"
         mkdir -p "$target_template/user"
-        cp -Rn "$SRC_DIR/template/user/." "$target_template/user/"
+        additive_copy "$SRC_DIR/template/user" "$target_template/user"
     fi
 
     # 7. Манифест расширений и README — всегда из исходников
@@ -314,7 +331,7 @@ install() {
         mkdir -p "$target_env/default"
         cp -a "$target_template/common/." "$target_env/default/"
         # заглушки слоя 2 — как при обычном запуске (аддитивно)
-        cp -Rn "$target_template/user/." "$target_env/default/" 2>/dev/null || true
+        additive_copy "$target_template/user" "$target_env/default"
     else
         log "Окружение default уже существует — пропускаю создание"
     fi

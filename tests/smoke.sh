@@ -8,12 +8,14 @@
 # с моделью) — вне скоупа, см. tests/ACCEPTANCE.md.
 #
 # Использование:
-#   tests/smoke.sh [--offline] [--keep] [--rebuild] [-h]
+#   tests/smoke.sh [--offline] [--keep] [--rebuild] [--no-docker] [-h]
 #
 # Опции:
 #   --offline   пропустить проверку доступа в интернет (R14)
 #   --keep      не удалять временный каталог (путь печатается в конце)
 #   --rebuild   пересобрать образ, даже если он существует
+#   --no-docker не требует docker-демона: docker-зависимые фазы (2, 4)
+#               пропускаются, CLI-фазы (0, 1, 3) идут через tests/docker-stub
 #   -h, --help  эта справка
 #
 # Переменные окружения:
@@ -35,18 +37,21 @@ set -euo pipefail
 OFFLINE=0
 KEEP=0
 REBUILD=0
+NO_DOCKER=0
 
 usage() {
     cat <<'EOF'
 pibox smoke-тесты (задача 8)
 
 Использование:
-    tests/smoke.sh [--offline] [--keep] [--rebuild] [-h]
+    tests/smoke.sh [--offline] [--keep] [--rebuild] [--no-docker] [-h]
 
 Опции:
     --offline   пропустить проверку доступа в интернет
     --keep      сохранить временный каталог (путь печатается в конце)
     --rebuild   пересобрать образ pibox, даже если он существует
+    --no-docker пропуск docker-фаз (2, 4); CLI-фазы работают через
+                tests/docker-stub (запуск внутри контейнера без демона)
     -h, --help  эта справка
 
 Требования: bash >= 3.2, docker >= 20.10 (запущенный демон),
@@ -59,6 +64,7 @@ while [ $# -gt 0 ]; do
     --offline) OFFLINE=1 ;;
     --keep) KEEP=1 ;;
     --rebuild) REBUILD=1 ;;
+    --no-docker) NO_DOCKER=1 ;;
     -h | --help)
         usage
         exit 0
@@ -74,6 +80,15 @@ done
 _SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck disable=SC1091  # относительный путь; файл рядом, проверяется линтом отдельно
 source "$_SCRIPT_DIR/helpers.sh"
+
+# --no-docker: подсовываем docker-заглушку в начало PATH (интерфейс — ровно
+# то, что нужно не-docker фазам: info/version/image inspect). Настоящий
+# docker в этом режиме не требуется; фазы 2 и 4 пропускаются ниже.
+if [ "$NO_DOCKER" = "1" ]; then
+    export PATH="$_SCRIPT_DIR/docker-stub:$PATH"
+    export PIBOX_STUB_IMAGE="$IMAGE"
+    log "--no-docker: docker-заглушка активна (фазы 2 и 4 будут пропущены)"
+fi
 
 # ============================================================================
 # Фаза 0: предварительные требования
@@ -115,11 +130,12 @@ group "Фаза 1: install.sh"
 
 expect_ok "I1: install.sh --help" "$SRC_DIR/install.sh" --help
 
-if "$SRC_DIR/install.sh" --dir "$TEST_PIBOX" --no-path --src "$SRC_DIR" >/dev/null 2>&1; then
-    ok "I2: установка в ${TEST_PIBOX}"
-else
+INSTALL_OUT=""
+if ! INSTALL_OUT="$($"$SRC_DIR"/install.sh --dir "$TEST_PIBOX" --no-path --src "$SRC_DIR" 2>&1)"; then
+    printf '%s\n' "$INSTALL_OUT" | tail -5 >&2
     die "I2: install.sh завершился с ошибкой — дальнейшие тесты бессмысленны"
 fi
+ok "I2: установка в ${TEST_PIBOX}"
 
 for path in bin/pibox docker/Dockerfile docker/entrypoint.sh docker/.dockerignore \
     template/README.md template/extensions.txt \
@@ -142,10 +158,12 @@ USER_MODELS="$TEST_PIBOX/template/user/.pi/agent/models.json"
 echo "// smoke-sentinel" >>"$USER_MODELS"
 echo "// smoke-sentinel" >>"$TEST_PIBOX/docker/Dockerfile"
 
-if "$SRC_DIR/install.sh" --dir "$TEST_PIBOX" --no-path --src "$SRC_DIR" >/dev/null 2>&1; then
-    ok "I5: повторная установка (без --force) прошла"
-else
+INSTALL_OUT=""
+if ! INSTALL_OUT="$("$SRC_DIR"/install.sh --dir "$TEST_PIBOX" --no-path --src "$SRC_DIR" 2>&1)"; then
     fail "I5: повторная установка завершилась с ошибкой"
+    printf '%s\n' "$INSTALL_OUT" | tail -5 >&2
+else
+    ok "I5: повторная установка (без --force) прошла"
 fi
 if [ "$(file_mtime "$BIN")" != "$OLD_BIN_MTIME" ]; then
     ok "I5: bin/pibox перезаписан (всегда)"
@@ -169,10 +187,12 @@ echo keepme >"$TEST_PIBOX/env/default/.smoke-sentinel"
 touch -t 202001010000 "$BIN"
 OLD_BIN_MTIME="$(file_mtime "$BIN")"
 
-if "$SRC_DIR/install.sh" --dir "$TEST_PIBOX" --no-path --force --src "$SRC_DIR" >/dev/null 2>&1; then
-    ok "I6: переустановка с --force прошла"
-else
+INSTALL_OUT=""
+if ! INSTALL_OUT="$("$SRC_DIR"/install.sh --dir "$TEST_PIBOX" --no-path --force --src "$SRC_DIR" 2>&1)"; then
     fail "I6: переустановка с --force завершилась с ошибкой"
+    printf '%s\n' "$INSTALL_OUT" | tail -5 >&2
+else
+    ok "I6: переустановка с --force прошла"
 fi
 if [ "$(file_mtime "$BIN")" != "$OLD_BIN_MTIME" ]; then
     ok "I6: bin/pibox обновлён (--force)"
@@ -201,63 +221,67 @@ fi
 
 group "Фаза 2: Docker-образ"
 
-NEED_BUILD=1
-if docker image inspect "$IMAGE" >/dev/null 2>&1; then
-    if [ "$REBUILD" = "1" ]; then
-        log "образ ${IMAGE} существует — пересобираю (--rebuild)"
-    else
-        NEED_BUILD=0
-        log "образ ${IMAGE} существует — сборка пропущена (--rebuild для пересборки)"
-    fi
-fi
-
-if [ "$NEED_BUILD" = "1" ]; then
-    log "сборка ${IMAGE} из ${TEST_PIBOX}/docker (первый раз — несколько минут)..."
-    if ! docker build -t "$IMAGE" "$TEST_PIBOX/docker" >&2; then
-        die "сборка образа не удалась"
-    fi
-fi
-ok "B0: образ ${IMAGE} доступен"
-
-expect_ok "B1: pi --version" docker run --rm "$IMAGE" pi --version
-expect_ok "B2: mise --version" docker run --rm "$IMAGE" mise --version
-expect_ok "B2: node --version" docker run --rm "$IMAGE" node --version
-expect_ok "B2: npm --version" docker run --rm "$IMAGE" npm --version
-expect_ok "B3: инструменты глобально в PATH" docker run --rm "$IMAGE" \
-    bash -c 'command -v pi node npm mise gosu tini jq yq rg xxd git python3 make'
-# Переменные в строках bash -c намеренно раскрываются bash-ом контейнера
-# shellcheck disable=SC2016
-expect_ok "B4: тяжёлых тулчейнов в образе нет" docker run --rm "$IMAGE" \
-    bash -c 'for t in gcc gdb rustc cargo cmake valgrind strace tcpdump; do command -v "$t" && exit 1; done; exit 0'
-# shellcheck disable=SC2016
-expect_ok "B5: пользователь pi (uid 1000) и /opt/skel" docker run --rm "$IMAGE" \
-    bash -c '[ "$(id -u pi)" = 1000 ] && [ -f /opt/skel/.bashrc ] && [ -f /opt/skel/.profile ]'
-
-# B6: pi-web-ui вшит в образ: бинарники, нативный node-pty (собран в builder),
-# дедуп SDK через симлинк, стрипы платформенного жира
-expect_ok "B6: pi-web-ui и лаунчер webui в PATH" docker run --rm "$IMAGE" \
-    bash -c 'command -v pi-web-ui webui'
-# shellcheck disable=SC2016
-expect_ok "B6: нативный node-pty загружается" docker run --rm "$IMAGE" \
-    node -e "require('/usr/local/lib/node_modules/pi-web-ui/node_modules/node-pty')"
-# shellcheck disable=SC2016
-expect_ok "B6: дедуп: вложенной копии SDK нет (единое дерево, один SDK у TUI и webui)" docker run --rm "$IMAGE" \
-    bash -c '[ ! -e /usr/local/lib/node_modules/pi-web-ui/node_modules/@earendil-works ] && [ -d /usr/local/lib/node_modules/@earendil-works/pi-coding-agent ]'
-case "$(uname -m)" in
-x86_64 | amd64) ESB_KEEP="linux-x64" ;;
-aarch64 | arm64) ESB_KEEP="linux-arm64" ;;
-*) ESB_KEEP="" ;;
-esac
-if [ -n "$ESB_KEEP" ]; then
-    # shellcheck disable=SC2016
-    expect_ok "B6: esbuild-стрип: только ${ESB_KEEP}" docker run --rm "$IMAGE" \
-        bash -c "[ \"\$(ls -1 /usr/local/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/@esbuild)\" = ${ESB_KEEP} ]"
+if [ "$NO_DOCKER" = "1" ]; then
+    skip "B0–B6: сборка и проверки образа — требуется настоящий docker-демон"
 else
-    skip "B6: esbuild-стрип — неизвестная архитектура $(uname -m)"
+    NEED_BUILD=1
+    if docker image inspect "$IMAGE" >/dev/null 2>&1; then
+        if [ "$REBUILD" = "1" ]; then
+            log "образ ${IMAGE} существует — пересобираю (--rebuild)"
+        else
+            NEED_BUILD=0
+            log "образ ${IMAGE} существует — сборка пропущена (--rebuild для пересборки)"
+        fi
+    fi
+
+    if [ "$NEED_BUILD" = "1" ]; then
+        log "сборка ${IMAGE} из ${TEST_PIBOX}/docker (первый раз — несколько минут)..."
+        if ! docker build -t "$IMAGE" "$TEST_PIBOX/docker" >&2; then
+            die "сборка образа не удалась"
+        fi
+    fi
+    ok "B0: образ ${IMAGE} доступен"
+
+    expect_ok "B1: pi --version" docker run --rm "$IMAGE" pi --version
+    expect_ok "B2: mise --version" docker run --rm "$IMAGE" mise --version
+    expect_ok "B2: node --version" docker run --rm "$IMAGE" node --version
+    expect_ok "B2: npm --version" docker run --rm "$IMAGE" npm --version
+    expect_ok "B3: инструменты глобально в PATH" docker run --rm "$IMAGE" \
+        bash -c 'command -v pi node npm mise gosu tini jq yq rg xxd git python3 make'
+    # Переменные в строках bash -c намеренно раскрываются bash-ом контейнера
+    # shellcheck disable=SC2016
+    expect_ok "B4: тяжёлых тулчейнов в образе нет" docker run --rm "$IMAGE" \
+        bash -c 'for t in gcc gdb rustc cargo cmake valgrind strace tcpdump; do command -v "$t" && exit 1; done; exit 0'
+    # shellcheck disable=SC2016
+    expect_ok "B5: пользователь pi (uid 1000) и /opt/skel" docker run --rm "$IMAGE" \
+        bash -c '[ "$(id -u pi)" = 1000 ] && [ -f /opt/skel/.bashrc ] && [ -f /opt/skel/.profile ]'
+
+    # B6: pi-web-ui вшит в образ: бинарники, нативный node-pty (собран в builder),
+    # дедуп SDK через симлинк, стрипы платформенного жира
+    expect_ok "B6: pi-web-ui и лаунчер webui в PATH" docker run --rm "$IMAGE" \
+        bash -c 'command -v pi-web-ui webui'
+    # shellcheck disable=SC2016
+    expect_ok "B6: нативный node-pty загружается" docker run --rm "$IMAGE" \
+        node -e "require('/usr/local/lib/node_modules/pi-web-ui/node_modules/node-pty')"
+    # shellcheck disable=SC2016
+    expect_ok "B6: дедуп: вложенной копии SDK нет (единое дерево, один SDK у TUI и webui)" docker run --rm "$IMAGE" \
+        bash -c '[ ! -e /usr/local/lib/node_modules/pi-web-ui/node_modules/@earendil-works ] && [ -d /usr/local/lib/node_modules/@earendil-works/pi-coding-agent ]'
+    case "$(uname -m)" in
+    x86_64 | amd64) ESB_KEEP="linux-x64" ;;
+    aarch64 | arm64) ESB_KEEP="linux-arm64" ;;
+    *) ESB_KEEP="" ;;
+    esac
+    if [ -n "$ESB_KEEP" ]; then
+        # shellcheck disable=SC2016
+        expect_ok "B6: esbuild-стрип: только ${ESB_KEEP}" docker run --rm "$IMAGE" \
+            bash -c "[ \"\$(ls -1 /usr/local/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/@esbuild)\" = ${ESB_KEEP} ]"
+    else
+        skip "B6: esbuild-стрип — неизвестная архитектура $(uname -m)"
+    fi
+    # shellcheck disable=SC2016
+    expect_ok "B6: win32-пребилды node-pty вырезаны" docker run --rm "$IMAGE" \
+        bash -c '[ ! -d /usr/local/lib/node_modules/pi-web-ui/node_modules/node-pty/prebuilds ]'
 fi
-# shellcheck disable=SC2016
-expect_ok "B6: win32-пребилды node-pty вырезаны" docker run --rm "$IMAGE" \
-    bash -c '[ ! -d /usr/local/lib/node_modules/pi-web-ui/node_modules/node-pty/prebuilds ]'
 
 # ============================================================================
 # Фаза 3: CLI pibox (dry-run)
@@ -369,6 +393,7 @@ else
 fi
 
 # C27.3: pull с явным путём — новый для слоя файл промоутится
+mkdir -p "$TEST_PIBOX/env/smoke-env/.pi/agent/prompts"
 printf 'new-file-body\n' >"$TEST_PIBOX/env/smoke-env/.pi/agent/prompts/c27-new.md"
 if (cd "$TEST_WS" && "$BIN" user pull -e smoke-env .pi/agent/prompts/c27-new.md >/dev/null 2>&1); then
     ok "C27: user pull PATH прошёл"
@@ -480,12 +505,16 @@ fi
 expect_contains "C25: URL автооткрытия без токена" "$DRYW4" "браузер откроется автоматически: http://localhost:8787"
 
 DRYW5=""
-if DRYW5="$(cd "$TEST_WS" && PI_WEB_TOKEN=секрет "$BIN" webui --dry-run -E PI_WEB_TOKEN 2>/dev/null)"; then
+if DRYW5="$(cd "$TEST_WS" && PI_WEB_TOKEN=s3cret "$BIN" webui --dry-run -E PI_WEB_TOKEN 2>/dev/null)"; then
     ok "C25: webui --dry-run с -E PI_WEB_TOKEN"
 else
     fail "C25: webui --dry-run с токеном завершился с ошибкой"
 fi
-expect_contains "C25: токен подставлен в URL" "$DRYW5" "/?token=секрет"
+expect_contains "C25: токен подставлен в URL" "$DRYW5" "/?token=s3cret"
+
+# не-URL-safe токен в ссылку не подставляем (URL был бы битым)
+DRYW5B="$(cd "$TEST_WS" && PI_WEB_TOKEN='сек рет' "$BIN" webui --dry-run -E PI_WEB_TOKEN 2>/dev/null)" || true
+expect_contains "C25: URL без не-URL-safe токена" "$DRYW5B" "http://localhost:8787 (--no-open"
 
 # C26: --no-open отключает автооткрытие
 DRYW6=""
@@ -720,11 +749,11 @@ if command -v jq >/dev/null 2>&1; then
     D9_DRIFT="$(cd "$TEST_WS" && "$BIN" doctor -e smoke-env 2>/dev/null)" || true
     expect_contains "C20: D9 — дрейф версии обнаружен" "$D9_DRIFT" "версия не совпадает: pi-lens"
 
-    # отсутствие пакета
-    rm -rf "$DN9/@tintinweb"
+    # отсутствие пакета (берём реальное имя из манифеста)
+    rm -rf "$DN9/pi-subagents"
     D9_MISS="$(cd "$TEST_WS" && "$BIN" doctor -e smoke-env 2>/dev/null)" || true
     expect_contains "C20: D9 — отсутствие пакета (FAIL)" "$D9_MISS" "отсутствуют 1 из $N9"
-    # и раз pi-subagents удалён — его и не хватает в settings.json
+    # пакет удалён из дерева и его нет в settings.json
     expect_contains "C20: D9 — пакета нет в settings.json" "$D9_MISS" "в settings.json нет"
 
     # тестовые артефакты — не утекают в следующие проверки
@@ -763,149 +792,177 @@ cli_fails_in "C18: имя с пробелом отклоняется" "$TEST_WS"
 
 group "Фаза 4: контейнер (runtime)"
 
-ENV_UID="$(mktemp -d "$TEST_ROOT/env-uid-XXXX")"
-ENV_FRESH="$(mktemp -d "$TEST_ROOT/env-fresh-XXXX")"
-ENV_USER="$(mktemp -d "$TEST_ROOT/env-user-XXXX")"
-ENV_NOMERGE="$(mktemp -d "$TEST_ROOT/env-nomerge-XXXX")"
-ENV_CAPS="$(mktemp -d "$TEST_ROOT/env-caps-XXXX")"
-ENV_E2E="$TEST_PIBOX/env/smoke-env"
-
-# --- R1: UID/GID ---
-capture_eq "R1: id -u = хостовому" "$HOST_UID" \
-    docker_pibox "$ENV_UID" "$TEST_WS" -- bash -c 'id -u'
-capture_eq "R1: id -g = хостовому" "$HOST_GID" \
-    docker_pibox "$ENV_UID" "$TEST_WS" -- bash -c 'id -g'
-
-# --- R2: владение файлами в workspace ---
-expect_ok "R2: файл создаётся в workspace" \
-    docker_pibox "$ENV_UID" "$TEST_WS" -- bash -c "echo from-container > $WS_IN_CONTAINER/from-container.txt"
-expect_eq "R2: владелец файла = хост-пользователь (не root)" "$HOST_UID" \
-    "$(file_owner "$TEST_WS/from-container.txt")"
-
-# --- R3: HOME / USER / PATH ---
-# shellcheck disable=SC2016  # $HOME раскрывается внутри контейнера
-capture_eq "R3: HOME=/home/pi" "/home/pi" \
-    docker_pibox "$ENV_UID" "$TEST_WS" -- bash -c 'printf %s "$HOME"'
-# shellcheck disable=SC2016  # $USER раскрывается внутри контейнера
-capture_eq "R3: USER=pi" "pi" \
-    docker_pibox "$ENV_UID" "$TEST_WS" -- bash -c 'printf %s "$USER"'
-# shellcheck disable=SC2016  # $PATH раскрывается внутри контейнера
-PATH_OUT="$(docker_pibox "$ENV_UID" "$TEST_WS" -- bash -c 'printf %s "$PATH"' 2>/dev/null || true)"
-expect_contains "R3: PATH содержит mise-шимы" "$PATH_OUT" ".local/share/mise/shims"
-
-# --- R4: процессная цепочка (tini = PID 1) ---
-capture_eq "R4: PID 1 = tini (gosu→tini exec-цепочка)" "tini" \
-    docker_pibox "$ENV_UID" "$TEST_WS" -- cat /proc/1/comm
-
-# --- R5: dotfiles-слои на свежем окружении ---
-expect_ok "R5: первый запуск на пустом env" docker_pibox "$ENV_FRESH" "$TEST_WS" -- true
-if grep -qF 'PIBOX_SKELETON_V1' "$ENV_FRESH/.bashrc"; then ok "R5: заглушка с маркером создана"; else fail "R5: заглушка .bashrc не создана"; fi
-if [ -f "$ENV_FRESH/.bashrc.pibox" ] && grep -q 'mise activate' "$ENV_FRESH/.bashrc.pibox"; then ok "R5: сток .bashrc.pibox развёрнут"; else fail "R5: .bashrc.pibox отсутствует/пуст"; fi
-if [ -f "$ENV_FRESH/.bash_logout" ]; then ok "R5: .bash_logout из skel"; else fail "R5: .bash_logout из skel отсутствует"; fi
-expect_eq "R5: заглушка принадлежит хост-пользователю" "$HOST_UID" "$(file_owner "$ENV_FRESH/.bashrc")"
-expect_eq "R5: .bash_logout принадлежит хост-пользователю" "$HOST_UID" "$(file_owner "$ENV_FRESH/.bash_logout")"
-
-# --- R6: пользовательский .bashrc не теряется, а мигрирует в .user ---
-printf '%s\n' '# smoke user bashrc' >"$ENV_USER/.bashrc"
-expect_ok "R6: запуск с пользовательским .bashrc" docker_pibox "$ENV_USER" "$TEST_WS" -- true
-if grep -qF 'smoke user bashrc' "$ENV_USER/.bashrc.user"; then
-    ok "R6: пользовательский .bashrc мигрирован в .bashrc.user"
+if [ "$NO_DOCKER" = "1" ]; then
+    skip "R1–R20: runtime-проверки контейнера — требуется настоящий docker-демон"
 else
-    fail "R6: миграция .bashrc.user не сработала"
-fi
-if grep -qF 'PIBOX_SKELETON_V1' "$ENV_USER/.bashrc"; then
-    ok "R6: создана заглушка с маркером"
-else
-    fail "R6: заглушка не создана"
-fi
+    ENV_UID="$(mktemp -d "$TEST_ROOT/env-uid-XXXX")"
+    ENV_FRESH="$(mktemp -d "$TEST_ROOT/env-fresh-XXXX")"
+    ENV_USER="$(mktemp -d "$TEST_ROOT/env-user-XXXX")"
+    ENV_NOMERGE="$(mktemp -d "$TEST_ROOT/env-nomerge-XXXX")"
+    ENV_NPMRC="$(mktemp -d "$TEST_ROOT/env-npmrc-XXXX")"
+    ENV_CAPS="$(mktemp -d "$TEST_ROOT/env-caps-XXXX")"
+    ENV_E2E="$TEST_PIBOX/env/smoke-env"
 
-# --- R7: повторный запуск: заглушка не пересоздаётся ---
-expect_ok "R7: первый запуск" docker_pibox "$ENV_NOMERGE" "$TEST_WS" -- true
-STUB_R7="$(md5sum "$ENV_NOMERGE/.bashrc" | cut -d' ' -f1)"
-expect_ok "R7: повторный запуск" docker_pibox "$ENV_NOMERGE" "$TEST_WS" -- true
-expect_eq "R7: заглушка не изменилась при повторном запуске" "$STUB_R7" \
-    "$(md5sum "$ENV_NOMERGE/.bashrc" | cut -d' ' -f1)"
+    # --- R1: UID/GID ---
+    capture_eq "R1: id -u = хостовому" "$HOST_UID" \
+        docker_pibox "$ENV_UID" "$TEST_WS" -- bash -c 'id -u'
+    capture_eq "R1: id -g = хостовому" "$HOST_GID" \
+        docker_pibox "$ENV_UID" "$TEST_WS" -- bash -c 'id -g'
 
-# --- R9/R10: entrypoint отвергает опасные UID ---
-ERR9=""
-if ! ERR9="$(docker run --rm -e HOST_UID=0 -e HOST_GID=0 "$IMAGE" true 2>&1 >/dev/null)"; then
-    expect_contains "R9: отказ при HOST_UID=0" "$ERR9" "не является корректным UID"
-else
-    fail "R9: ожидался отказ при HOST_UID=0"
-fi
-expect_fail "R10: отказ при нечисловом HOST_UID" \
-    docker run --rm -e HOST_UID=abc -e HOST_GID=1000 "$IMAGE" true
+    # --- R2: владение файлами в workspace ---
+    expect_ok "R2: файл создаётся в workspace" \
+        docker_pibox "$ENV_UID" "$TEST_WS" -- bash -c "echo from-container > $WS_IN_CONTAINER/from-container.txt"
+    expect_eq "R2: владелец файла = хост-пользователь (не root)" "$HOST_UID" \
+        "$(file_owner "$TEST_WS/from-container.txt")"
 
-# --- R11: git safe.directory (передача GIT_CONFIG_*) ---
-# shellcheck disable=SC2016  # GIT_CONFIG_* экспортирует entrypoint внутри контейнера
-capture_eq "R11: PIBOX_GIT_SAFE=1 экспортирует GIT_CONFIG_*" "1|*" \
-    docker_pibox "$ENV_UID" "$TEST_WS" -e PIBOX_GIT_SAFE=1 -- \
-    bash -c 'printf "%s|%s" "$GIT_CONFIG_COUNT" "$GIT_CONFIG_VALUE_0"'
-if command -v git >/dev/null 2>&1; then
-    git init -q "$TEST_WS/gitrepo" 2>/dev/null || true
-    echo hi >"$TEST_WS/gitrepo/file.txt"
+    # --- R3: HOME / USER / PATH ---
+    # shellcheck disable=SC2016  # $HOME раскрывается внутри контейнера
+    capture_eq "R3: HOME=/home/pi" "/home/pi" \
+        docker_pibox "$ENV_UID" "$TEST_WS" -- bash -c 'printf %s "$HOME"'
+    # shellcheck disable=SC2016  # $USER раскрывается внутри контейнера
+    capture_eq "R3: USER=pi" "pi" \
+        docker_pibox "$ENV_UID" "$TEST_WS" -- bash -c 'printf %s "$USER"'
+    # shellcheck disable=SC2016  # $PATH раскрывается внутри контейнера
+    PATH_OUT="$(docker_pibox "$ENV_UID" "$TEST_WS" -- bash -c 'printf %s "$PATH"' 2>/dev/null || true)"
+    expect_contains "R3: PATH содержит mise-шимы" "$PATH_OUT" ".local/share/mise/shims"
 
-    expect_ok "R11: git status в workspace (репо с хоста, safe.directory)" \
-        docker_pibox "$ENV_UID" "$TEST_WS" -e PIBOX_GIT_SAFE=1 -- \
-        git -C "$WS_IN_CONTAINER/gitrepo" status
-    expect_ok "R11: git есть в контейнере" \
-        docker_pibox "$ENV_UID" "$TEST_WS" -- git --version
-else
-    skip "R11: git на хосте не найден"
-fi
+    # --- R4: процессная цепочка (tini = PID 1) ---
+    capture_eq "R4: PID 1 = tini (gosu→tini exec-цепочка)" "tini" \
+        docker_pibox "$ENV_UID" "$TEST_WS" -- cat /proc/1/comm
 
-# --- R12/R13/R14: сеть ---
-expect_ok "R12: host.docker.internal резолвится" \
-    docker_pibox "$ENV_CAPS" "$TEST_WS" -- getent hosts host.docker.internal
-expect_ok "R13: ping host.docker.internal (NET_RAW, file caps ping)" \
-    docker_pibox "$ENV_CAPS" "$TEST_WS" -- ping -c 1 -W 3 host.docker.internal
-if [ "$OFFLINE" = "1" ]; then
-    skip "R14: доступ в интернет (--offline)"
-else
-    # Целей несколько: DNS окружения может заворачивать отдельные домены
-    # (песочницы/корпоративные резолверы блокируют example.com, но не интернет).
-    # Считаем успехом, если отвечает хотя бы одна.
-    r14_ok=0
-    for r14_url in https://example.com https://www.google.com https://cloudflare.com; do
-        if docker_pibox "$ENV_CAPS" "$TEST_WS" -- \
-            curl -fsS -o /dev/null --max-time 20 "$r14_url" >/dev/null 2>&1; then
-            r14_ok=1
-            break
-        fi
-    done
-    if [ "$r14_ok" = "1" ]; then
-        ok "R14: доступ в интернет"
+    # --- R5: dotfiles-слои на свежем окружении ---
+    expect_ok "R5: первый запуск на пустом env" docker_pibox "$ENV_FRESH" "$TEST_WS" -- true
+    if grep -qF 'PIBOX_SKELETON_V1' "$ENV_FRESH/.bashrc"; then ok "R5: заглушка с маркером создана"; else fail "R5: заглушка .bashrc не создана"; fi
+    if [ -f "$ENV_FRESH/.bashrc.pibox" ] && grep -q 'mise activate' "$ENV_FRESH/.bashrc.pibox"; then ok "R5: сток .bashrc.pibox развёрнут"; else fail "R5: .bashrc.pibox отсутствует/пуст"; fi
+    if [ -f "$ENV_FRESH/.bash_logout" ]; then ok "R5: .bash_logout из skel"; else fail "R5: .bash_logout из skel отсутствует"; fi
+    expect_eq "R5: заглушка принадлежит хост-пользователю" "$HOST_UID" "$(file_owner "$ENV_FRESH/.bashrc")"
+    expect_eq "R5: .bash_logout принадлежит хост-пользователю" "$HOST_UID" "$(file_owner "$ENV_FRESH/.bash_logout")"
+
+    # --- R6: пользовательский .bashrc не теряется, а мигрирует в .user ---
+    printf '%s\n' '# smoke user bashrc' >"$ENV_USER/.bashrc"
+    expect_ok "R6: запуск с пользовательским .bashrc" docker_pibox "$ENV_USER" "$TEST_WS" -- true
+    if grep -qF 'smoke user bashrc' "$ENV_USER/.bashrc.user"; then
+        ok "R6: пользовательский .bashrc мигрирован в .bashrc.user"
     else
-        fail "R14: доступ в интернет (пробовали example.com, google.com, cloudflare.com)"
+        fail "R6: миграция .bashrc.user не сработала"
     fi
-fi
+    if grep -qF 'PIBOX_SKELETON_V1' "$ENV_USER/.bashrc"; then
+        ok "R6: создана заглушка с маркером"
+    else
+        fail "R6: заглушка не создана"
+    fi
 
-# --- R15: capabilities ---
-# CapBnd — bounding set (то, чем управляет --cap-add; переживает setuid).
-# CapEff — эффективный набор у pi. gosu сбрасывает его при setuid
-CAP_BND="$(docker_pibox "$ENV_CAPS" "$TEST_WS" -- \
-    bash -c 'sed -n "s/^CapBnd:[[:space:]]*//p" /proc/self/status' 2>/dev/null || true)"
-CAP_EFF="$(docker_pibox "$ENV_CAPS" "$TEST_WS" -- \
-    bash -c 'sed -n "s/^CapEff:[[:space:]]*//p" /proc/self/status' 2>/dev/null || true)"
-if has_bit "$CAP_BND" 19; then
-    ok "R15: CapBnd содержит SYS_PTRACE (бит 19) — --cap-add работает"
-else
-    fail "R15: SYS_PTRACE нет в CapBnd («${CAP_BND}»)"
-fi
-if has_bit "$CAP_BND" 13; then
-    ok "R15: CapBnd содержит NET_RAW (бит 13)"
-else
-    fail "R15: NET_RAW нет в CapBnd («${CAP_BND}»)"
-fi
-if has_bit "$CAP_EFF" 13; then
-    ok "R15: CapEff NET_RAW у pi (capabilities эффективны)"
-else
-    known "R15: CapEff пуст у pi — gosu сбрасывает capabilities при setuid. Критерий приёмки правки entrypoint (Правка 2): этот тест становится зелёным. До правки: strace -p attach / tcpdump от pi не работают; ping работает (file caps)."
-fi
+    # --- R7: повторный запуск: заглушка не пересоздаётся ---
+    expect_ok "R7: первый запуск" docker_pibox "$ENV_NOMERGE" "$TEST_WS" -- true
+    STUB_R7="$(md5sum "$ENV_NOMERGE/.bashrc" | cut -d' ' -f1)"
+    expect_ok "R7: повторный запуск" docker_pibox "$ENV_NOMERGE" "$TEST_WS" -- true
+    expect_eq "R7: заглушка не изменилась при повторном запуске" "$STUB_R7" \
+        "$(md5sum "$ENV_NOMERGE/.bashrc" | cut -d' ' -f1)"
 
-# --- R16: ptrace (механика трассировки собственных потомков) ---
-expect_ok "R16: ptrace собственного потомка (python)" \
-    docker_pibox "$ENV_CAPS" "$TEST_WS" -- python3 -c '
+    # --- R8: npm prefix — entrypoint принудительно ведёт в ~/.local ---
+    # (дефолт /usr/local неперсистентен; npm config set точечен — чужие ключи
+    #   ~/.npmrc (registry, _authToken) не трогаются)
+    # Свежий env (R5 уже гонял ENV_FRESH — проверяем заодно идемпотентность):
+    if [ -f "$ENV_FRESH/.npmrc" ] && grep -q '^prefix=/home/pi/.local$' "$ENV_FRESH/.npmrc"; then
+        ok "R8: .npmrc создан с prefix=/home/pi/.local"
+    else
+        fail "R8: .npmrc без prefix=/home/pi/.local"
+    fi
+    expect_eq "R8: .npmrc принадлежит хост-пользователю" "$HOST_UID" "$(file_owner "$ENV_FRESH/.npmrc")"
+    # Пользовательский .npmrc: токен и registry выживают, prefix вытесняется:
+    printf '%s\n' 'registry=https://registry.example.com/' '//registry.example.com/:_authToken=smoke-token' 'prefix=/usr/local' >"$ENV_NPMRC/.npmrc"
+    expect_ok "R8: запуск с пользовательским .npmrc" docker_pibox "$ENV_NPMRC" "$TEST_WS" -- true
+    if grep -q '^prefix=/home/pi/.local$' "$ENV_NPMRC/.npmrc"; then
+        ok "R8: prefix вытеснен на ~/.local"
+    else
+        fail "R8: prefix не установлен"
+    fi
+    if grep -qF 'smoke-token' "$ENV_NPMRC/.npmrc" && grep -qF 'registry.example.com' "$ENV_NPMRC/.npmrc"; then
+        ok "R8: токен и registry пользователя сохранены"
+    else
+        fail "R8: пользовательские ключи .npmrc потеряны"
+    fi
+
+    # --- R9/R10: entrypoint отвергает опасные UID ---
+    ERR9=""
+    if ! ERR9="$(docker run --rm -e HOST_UID=0 -e HOST_GID=0 "$IMAGE" true 2>&1 >/dev/null)"; then
+        expect_contains "R9: отказ при HOST_UID=0" "$ERR9" "не является корректным UID"
+    else
+        fail "R9: ожидался отказ при HOST_UID=0"
+    fi
+    expect_fail "R10: отказ при нечисловом HOST_UID" \
+        docker run --rm -e HOST_UID=abc -e HOST_GID=1000 "$IMAGE" true
+
+    # --- R11: git safe.directory (передача GIT_CONFIG_*) ---
+    # shellcheck disable=SC2016  # GIT_CONFIG_* экспортирует entrypoint внутри контейнера
+    capture_eq "R11: PIBOX_GIT_SAFE=1 экспортирует GIT_CONFIG_*" "1|*" \
+        docker_pibox "$ENV_UID" "$TEST_WS" -e PIBOX_GIT_SAFE=1 -- \
+        bash -c 'printf "%s|%s" "$GIT_CONFIG_COUNT" "$GIT_CONFIG_VALUE_0"'
+    if command -v git >/dev/null 2>&1; then
+        git init -q "$TEST_WS/gitrepo" 2>/dev/null || true
+        echo hi >"$TEST_WS/gitrepo/file.txt"
+
+        expect_ok "R11: git status в workspace (репо с хоста, safe.directory)" \
+            docker_pibox "$ENV_UID" "$TEST_WS" -e PIBOX_GIT_SAFE=1 -- \
+            git -C "$WS_IN_CONTAINER/gitrepo" status
+        expect_ok "R11: git есть в контейнере" \
+            docker_pibox "$ENV_UID" "$TEST_WS" -- git --version
+    else
+        skip "R11: git на хосте не найден"
+    fi
+
+    # --- R12/R13/R14: сеть ---
+    expect_ok "R12: host.docker.internal резолвится" \
+        docker_pibox "$ENV_CAPS" "$TEST_WS" -- getent hosts host.docker.internal
+    expect_ok "R13: ping host.docker.internal (NET_RAW, file caps ping)" \
+        docker_pibox "$ENV_CAPS" "$TEST_WS" -- ping -c 1 -W 3 host.docker.internal
+    if [ "$OFFLINE" = "1" ]; then
+        skip "R14: доступ в интернет (--offline)"
+    else
+        # Целей несколько: DNS окружения может заворачивать отдельные домены
+        # (песочницы/корпоративные резолверы блокируют example.com, но не интернет).
+        # Считаем успехом, если отвечает хотя бы одна.
+        r14_ok=0
+        for r14_url in https://example.com https://www.google.com https://cloudflare.com; do
+            if docker_pibox "$ENV_CAPS" "$TEST_WS" -- \
+                curl -fsS -o /dev/null --max-time 20 "$r14_url" >/dev/null 2>&1; then
+                r14_ok=1
+                break
+            fi
+        done
+        if [ "$r14_ok" = "1" ]; then
+            ok "R14: доступ в интернет"
+        else
+            fail "R14: доступ в интернет (пробовали example.com, google.com, cloudflare.com)"
+        fi
+    fi
+
+    # --- R15: capabilities ---
+    # CapBnd — bounding set (то, чем управляет --cap-add; переживает setuid).
+    # CapEff — эффективный набор у pi. gosu сбрасывает его при setuid
+    CAP_BND="$(docker_pibox "$ENV_CAPS" "$TEST_WS" -- \
+        bash -c 'sed -n "s/^CapBnd:[[:space:]]*//p" /proc/self/status' 2>/dev/null || true)"
+    CAP_EFF="$(docker_pibox "$ENV_CAPS" "$TEST_WS" -- \
+        bash -c 'sed -n "s/^CapEff:[[:space:]]*//p" /proc/self/status' 2>/dev/null || true)"
+    if has_bit "$CAP_BND" 19; then
+        ok "R15: CapBnd содержит SYS_PTRACE (бит 19) — --cap-add работает"
+    else
+        fail "R15: SYS_PTRACE нет в CapBnd («${CAP_BND}»)"
+    fi
+    if has_bit "$CAP_BND" 13; then
+        ok "R15: CapBnd содержит NET_RAW (бит 13)"
+    else
+        fail "R15: NET_RAW нет в CapBnd («${CAP_BND}»)"
+    fi
+    if has_bit "$CAP_EFF" 13; then
+        ok "R15: CapEff NET_RAW у pi (capabilities эффективны)"
+    else
+        known "R15: CapEff пуст у pi — gosu сбрасывает capabilities при setuid. Критерий приёмки правки entrypoint (Правка 2): этот тест становится зелёным. До правки: strace -p attach / tcpdump от pi не работают; ping работает (file caps)."
+    fi
+
+    # --- R16: ptrace (механика трассировки собственных потомков) ---
+    expect_ok "R16: ptrace собственного потомка (python)" \
+        docker_pibox "$ENV_CAPS" "$TEST_WS" -- python3 -c '
 import ctypes, os, signal, sys
 libc = ctypes.CDLL(None, use_errno=True)
 pid = os.fork()
@@ -919,102 +976,103 @@ os.waitpid(pid, 0)
 sys.exit(0 if ok else 1)
 '
 
-# --- R17: лимиты ресурсов (docker inspect) ---
-LIMITS_NAME="pibox-smoke-limits"
-CLEANUP_CONTAINERS+=("$LIMITS_NAME")
-if docker run -d --rm --name "$LIMITS_NAME" \
-    --memory 512m --cpus 1 --pids-limit 256 \
-    --add-host host.docker.internal:host-gateway \
-    --cap-add SYS_PTRACE --cap-add NET_RAW \
-    -e "HOST_UID=$HOST_UID" -e "HOST_GID=$HOST_GID" \
-    -v "$ENV_UID:/home/pi" -v "$TEST_WS:/home/pi/workspace" \
-    "$IMAGE" sleep 60 >/dev/null 2>&1; then
+    # --- R17: лимиты ресурсов (docker inspect) ---
+    LIMITS_NAME="pibox-smoke-limits"
+    CLEANUP_CONTAINERS+=("$LIMITS_NAME")
+    if docker run -d --rm --name "$LIMITS_NAME" \
+        --memory 512m --cpus 1 --pids-limit 256 \
+        --add-host host.docker.internal:host-gateway \
+        --cap-add SYS_PTRACE --cap-add NET_RAW \
+        -e "HOST_UID=$HOST_UID" -e "HOST_GID=$HOST_GID" \
+        -v "$ENV_UID:/home/pi" -v "$TEST_WS:/home/pi/workspace" \
+        "$IMAGE" sleep 60 >/dev/null 2>&1; then
 
-    ok "R17: контейнер с лимитами запущен"
-    expect_eq "R17: memory = 512m" "536870912" \
-        "$(docker inspect -f '{{.HostConfig.Memory}}' "$LIMITS_NAME" 2>/dev/null || echo '')"
-    expect_eq "R17: cpus = 1" "1000000000" \
-        "$(docker inspect -f '{{.HostConfig.NanoCpus}}' "$LIMITS_NAME" 2>/dev/null || echo '')"
-    expect_eq "R17: pids-limit = 256" "256" \
-        "$(docker inspect -f '{{.HostConfig.PidsLimit}}' "$LIMITS_NAME" 2>/dev/null || echo '')"
-else
-    fail "R17: не удалось запустить контейнер с лимитами"
-fi
-docker rm -f "$LIMITS_NAME" >/dev/null 2>&1 || true
-
-# --- R18: проброс портов ---
-# Внутренний порт 8080 (>1024): pi не имеет CAP_NET_BIND_SERVICE после gosu.
-PORT=$(((RANDOM % 20000) + 20000))
-PORT_NAME="pibox-smoke-port"
-CLEANUP_CONTAINERS+=("$PORT_NAME")
-echo "smoke-port-ok" >"$TEST_WS/port-probe.txt"
-if docker run -d --rm --name "$PORT_NAME" \
-    -p "${PORT}:8080" \
-    --add-host host.docker.internal:host-gateway \
-    --cap-add SYS_PTRACE --cap-add NET_RAW \
-    -e "HOST_UID=$HOST_UID" -e "HOST_GID=$HOST_GID" \
-    -v "$ENV_UID:/home/pi" -v "$TEST_WS:/home/pi/workspace" \
-    "$IMAGE" python3 -m http.server 8080 --directory /home/pi/workspace >/dev/null 2>&1; then
-
-    ok "R18: контейнер с http.server запущен (host:${PORT} → конт:8080)"
-    BODY=""
-    for _ in $(seq 1 40); do
-        if BODY="$(curl -fsS "http://127.0.0.1:${PORT}/port-probe.txt" 2>/dev/null)"; then
-            break
-        fi
-        sleep 0.5
-    done
-    expect_eq "R18: ответ получен через проброшенный порт" "smoke-port-ok" "$BODY"
-else
-    fail "R18: не удалось запустить контейнер с пробросом порта"
-fi
-docker rm -f "$PORT_NAME" >/dev/null 2>&1 || true
-
-# --- R19: end-to-end (окружение, созданное CLI) ---
-if [ -d "$ENV_E2E" ]; then
-    capture_eq "R19: файл workspace виден в контейнере" "probe-content" \
-        docker_pibox "$ENV_E2E" "$TEST_WS" -- cat "$WS_IN_CONTAINER/probe.txt"
-    expect_ok "R19: models.json из CLI-окружения доступен в контейнере" \
-        docker_pibox "$ENV_E2E" "$TEST_WS" -- test -f /home/pi/.pi/agent/models.json
-else
-    fail "R19: окружение smoke-env не создано (см. C10)"
-fi
-
-# --- R20: webui (pi-web-ui) — лаунчер, health через проброшенный порт ---
-# Запуск как это делает `pibox webui`: команда контейнера `webui`, порт 8787
-# наружу (host-порт случайный, чтобы не конфликтовать с чужим 8787).
-WEBUI_NAME="pibox-smoke-webui"
-CLEANUP_CONTAINERS+=("$WEBUI_NAME")
-WEBUI_PORT=$(((RANDOM % 20000) + 20000))
-if [ -d "$ENV_E2E" ] && docker run -d --rm --name "$WEBUI_NAME" \
-    -p "127.0.0.1:${WEBUI_PORT}:8787" \
-    --add-host host.docker.internal:host-gateway \
-    --cap-add SYS_PTRACE --cap-add NET_RAW \
-    -e "HOST_UID=$HOST_UID" -e "HOST_GID=$HOST_GID" \
-    -v "$ENV_E2E:/home/pi" -v "$TEST_WS:/home/pi/workspace" \
-    -w /home/pi/workspace \
-    "$IMAGE" webui >/dev/null 2>&1; then
-    ok "R20: webui-контейнер запущен"
-    HEALTH=""
-    for _ in $(seq 1 60); do
-        if HEALTH="$(curl -fsS "http://127.0.0.1:${WEBUI_PORT}/api/health" 2>/dev/null)"; then
-            break
-        fi
-        sleep 0.5
-    done
-    if [ -n "$HEALTH" ]; then
-        ok "R20: /api/health отвечает через проброшенный порт"
-        expect_contains "R20: engine=pi в health" "$HEALTH" '"engine":"pi"'
+        ok "R17: контейнер с лимитами запущен"
+        expect_eq "R17: memory = 512m" "536870912" \
+            "$(docker inspect -f '{{.HostConfig.Memory}}' "$LIMITS_NAME" 2>/dev/null || echo '')"
+        expect_eq "R17: cpus = 1" "1000000000" \
+            "$(docker inspect -f '{{.HostConfig.NanoCpus}}' "$LIMITS_NAME" 2>/dev/null || echo '')"
+        expect_eq "R17: pids-limit = 256" "256" \
+            "$(docker inspect -f '{{.HostConfig.PidsLimit}}' "$LIMITS_NAME" 2>/dev/null || echo '')"
     else
-        fail "R20: /api/health не ответил за 30 с"
+        fail "R17: не удалось запустить контейнер с лимитами"
     fi
-    WEBUI_LOGS="$(docker logs "$WEBUI_NAME" 2>&1 || true)"
-    expect_contains "R20: зелёная ссылка в логах" "$WEBUI_LOGS" "web-ui: http://localhost:8787"
-    expect_contains "R20: ANSI-зелёный у ссылки" "$WEBUI_LOGS" $'\033[32m'
-else
-    fail "R20: не удалось запустить webui-контейнер"
+    docker rm -f "$LIMITS_NAME" >/dev/null 2>&1 || true
+
+    # --- R18: проброс портов ---
+    # Внутренний порт 8080 (>1024): pi не имеет CAP_NET_BIND_SERVICE после gosu.
+    PORT=$(((RANDOM % 20000) + 20000))
+    PORT_NAME="pibox-smoke-port"
+    CLEANUP_CONTAINERS+=("$PORT_NAME")
+    echo "smoke-port-ok" >"$TEST_WS/port-probe.txt"
+    if docker run -d --rm --name "$PORT_NAME" \
+        -p "${PORT}:8080" \
+        --add-host host.docker.internal:host-gateway \
+        --cap-add SYS_PTRACE --cap-add NET_RAW \
+        -e "HOST_UID=$HOST_UID" -e "HOST_GID=$HOST_GID" \
+        -v "$ENV_UID:/home/pi" -v "$TEST_WS:/home/pi/workspace" \
+        "$IMAGE" python3 -m http.server 8080 --directory /home/pi/workspace >/dev/null 2>&1; then
+
+        ok "R18: контейнер с http.server запущен (host:${PORT} → конт:8080)"
+        BODY=""
+        for _ in $(seq 1 40); do
+            if BODY="$(curl -fsS "http://127.0.0.1:${PORT}/port-probe.txt" 2>/dev/null)"; then
+                break
+            fi
+            sleep 0.5
+        done
+        expect_eq "R18: ответ получен через проброшенный порт" "smoke-port-ok" "$BODY"
+    else
+        fail "R18: не удалось запустить контейнер с пробросом порта"
+    fi
+    docker rm -f "$PORT_NAME" >/dev/null 2>&1 || true
+
+    # --- R19: end-to-end (окружение, созданное CLI) ---
+    if [ -d "$ENV_E2E" ]; then
+        capture_eq "R19: файл workspace виден в контейнере" "probe-content" \
+            docker_pibox "$ENV_E2E" "$TEST_WS" -- cat "$WS_IN_CONTAINER/probe.txt"
+        expect_ok "R19: models.json из CLI-окружения доступен в контейнере" \
+            docker_pibox "$ENV_E2E" "$TEST_WS" -- test -f /home/pi/.pi/agent/models.json
+    else
+        fail "R19: окружение smoke-env не создано (см. C10)"
+    fi
+
+    # --- R20: webui (pi-web-ui) — лаунчер, health через проброшенный порт ---
+    # Запуск как это делает `pibox webui`: команда контейнера `webui`, порт 8787
+    # наружу (host-порт случайный, чтобы не конфликтовать с чужим 8787).
+    WEBUI_NAME="pibox-smoke-webui"
+    CLEANUP_CONTAINERS+=("$WEBUI_NAME")
+    WEBUI_PORT=$(((RANDOM % 20000) + 20000))
+    if [ -d "$ENV_E2E" ] && docker run -d --rm --name "$WEBUI_NAME" \
+        -p "127.0.0.1:${WEBUI_PORT}:8787" \
+        --add-host host.docker.internal:host-gateway \
+        --cap-add SYS_PTRACE --cap-add NET_RAW \
+        -e "HOST_UID=$HOST_UID" -e "HOST_GID=$HOST_GID" \
+        -v "$ENV_E2E:/home/pi" -v "$TEST_WS:/home/pi/workspace" \
+        -w /home/pi/workspace \
+        "$IMAGE" webui >/dev/null 2>&1; then
+        ok "R20: webui-контейнер запущен"
+        HEALTH=""
+        for _ in $(seq 1 60); do
+            if HEALTH="$(curl -fsS "http://127.0.0.1:${WEBUI_PORT}/api/health" 2>/dev/null)"; then
+                break
+            fi
+            sleep 0.5
+        done
+        if [ -n "$HEALTH" ]; then
+            ok "R20: /api/health отвечает через проброшенный порт"
+            expect_contains "R20: engine=pi в health" "$HEALTH" '"engine":"pi"'
+        else
+            fail "R20: /api/health не ответил за 30 с"
+        fi
+        WEBUI_LOGS="$(docker logs "$WEBUI_NAME" 2>&1 || true)"
+        expect_contains "R20: зелёная ссылка в логах" "$WEBUI_LOGS" "web-ui: http://localhost:8787"
+        expect_contains "R20: ANSI-зелёный у ссылки" "$WEBUI_LOGS" $'\033[32m'
+    else
+        fail "R20: не удалось запустить webui-контейнер"
+    fi
+    docker rm -f "$WEBUI_NAME" >/dev/null 2>&1 || true
 fi
-docker rm -f "$WEBUI_NAME" >/dev/null 2>&1 || true
 
 # ============================================================================
 # Итог

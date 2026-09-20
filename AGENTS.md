@@ -10,9 +10,8 @@
 
 - PIBOX — запуск Pi Coding Agent в изолированном Docker-контейнере с персистентными окружениями.
 - Основные файлы: `Dockerfile` (pi + pi-web-ui в /usr/local), `entrypoint.sh`, `webui.sh` (лаунчер web-ui), `bin/pibox` + `lib/` (CLI), `install.sh`, `template/` (двухслойный шаблон: `common` — продукт, `user` — личные инварианты).
-- Проверки: `./tests/smoke.sh` и `shellcheck install.sh entrypoint.sh webui.sh bin/pibox lib/*.sh tests/*.sh`.
+- Проверки: `./tests/smoke.sh` (полный — на хосте с docker; внутри контейнера — `./tests/smoke.sh --no-docker`, см. [docs/TESTS.md](docs/TESTS.md)) и `shellcheck install.sh entrypoint.sh webui.sh bin/pibox lib/*.sh tests/*.sh`.
 - Скрипты — bash, только LF-окончания.
-- Существующие окружения пользователей (`~/pibox/env/*`) не затрагивать.
 
 ## Соглашения по коду
 

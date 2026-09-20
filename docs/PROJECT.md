@@ -36,7 +36,7 @@ PIBOX — обвязка вокруг [Pi Coding Agent](https://pi.dev/) (npm: `
 | `template/common/` | СЛОЙ 1: начальное состояние окружений — стартовые знания агента (`.pi/agent/AGENTS.md`, скиллы `install-languages`, `workspace-hygiene`, `networking`, `extension-hygiene`, `show-image`, расширение `terminal-probe`) |
 | `template/user/` | СЛОЙ 2: личные инварианты — `models.json`, `USER.md`, личные расширения (`selectel-thinking-off.ts`), конфиги (`pi-image-gen/`); в репо — заглушки, реальные значения — в установке |
 | `template/extensions.txt` | манифест расширений pi (`npm:имя@версия`); ставятся `pibox extensions install`, аудит — `doctor` (D9) |
-| `tests/smoke.sh` + `tests/helpers.sh` | >100 автопроверок: install → build → CLI → runtime; флаги `--offline/--keep/--rebuild`; хелперы (счётчики, `expect_*`, `docker_pibox`, очистка) — в `helpers.sh` |
+| `tests/smoke.sh` + `tests/helpers.sh` | >100 автопроверок: install → build → CLI → runtime; флаги `--offline/--keep/--rebuild/--no-docker`; хелперы (счётчики, `expect_*`, `docker_pibox`, очистка) — в `helpers.sh`; docker-заглушка для прогонов в контейнере — `tests/docker-stub/`, см. `docs/TESTS.md` |
 
 `docs/` содержит только этот файл (`PROJECT.md`).
 
@@ -48,7 +48,7 @@ PIBOX — обвязка вокруг [Pi Coding Agent](https://pi.dev/) (npm: `
 + Dockerfile ↔ pi-web-ui: `ARG PI_WEB_UI_VERSION` пинует версию; pi и pi-web-ui ставятся ОДНОЙ npm-командой — общий `@earendil-works/pi-coding-agent` дедупится в единственный экземпляр (один и тот же SDK у TUI `pi` и webui; последовательные установки не дедупятся — не разносить на два RUN). При несовместимости пинов npm молча ставит вложенную копию — guard («вложенной копии быть не должно») роняет сборку. node-pty собирается в builder (g++/make/python3 apt-стадией) — в runtime только `build/Release/pty.node` + системные `libstdc++6`/`libgcc-s1`. Стрипы: `@esbuild` → одна нативная платформа, `node-pty/prebuilds` (win32) — прочь.
 + entrypoint ↔ файлы home (договор о владельце): весь `/home/pi` — bind-mount хоста, все файлы в нём считаются принадлежащими хост-юзеру (`HOST_UID:HOST_GID`); рекурсивный chown при старте НЕ делается. Владелец чинится только у файлов, копируемых из skel (точечные chown + одноразовый `find -user 0` с `-xdev` внутри первого merge под маркером `.pibox_other_skel_done`). Перенос env между машинами с разным UID — разовый `chown -R` на хосте.
 + bin/pibox+lib/install.sh → шаблон: `PIBOX_DIR/env/<name>`, `PIBOX_DIR/template/{common,user}`.
-+ install.sh: копирует `bin/pibox` + `lib/` (каталог целиком, mirror-механизм как у `docker/`) → `~/pibox/`, build-контекст → `~/pibox/docker/`. Перезапись CLI+lib/docker/`template/common` — при каждом запуске; `template/user` — аддитивно (`cp -Rn`), правки и ключи не трогаются; `--force` дополнительно удаляет ВСЕ окружения (`env/*`).
++ install.sh: копирует `bin/pibox` + `lib/` (каталог целиком, mirror-механизм как у `docker/`) → `~/pibox/`, build-контекст → `~/pibox/docker/`. Перезапись CLI+lib/docker/`template/common` — при каждом запуске; `template/user` — аддитивно (`additive_copy`: без перезаписи существующего; не через `cp -n` — BSD cp на macOS 15+ возвращает 1 при пропуске файла, под set -e это валило повторную установку), правки и ключи не трогаются; `--force` дополнительно удаляет ВСЕ окружения (`env/*`).
 + Модель API с хоста доступна из контейнера как `http://host.docker.internal:8080`.
 
 ## Как проверять изменения
@@ -56,11 +56,14 @@ PIBOX — обвязка вокруг [Pi Coding Agent](https://pi.dev/) (npm: `
 ```bash
 pibox build                    # или docker build
 ./tests/smoke.sh               # полный прогон ~2 мин; --offline / --keep / --rebuild
-shellcheck install.sh entrypoint.sh webui.sh bin/pibox lib/*.sh tests/smoke.sh tests/helpers.sh   # так же в CI
-shfmt -d -i 4 install.sh entrypoint.sh webui.sh bin/pibox lib/*.sh tests/smoke.sh tests/helpers.sh  # стиль: 4 пробела, не табы
+./tests/smoke.sh --no-docker   # внутри контейнера pibox: CLI-фазы через tests/docker-stub, docker-фазы SKIP
+shellcheck install.sh entrypoint.sh webui.sh bin/pibox lib/*.sh tests/*.sh tests/docker-stub/docker   # так же в CI
+shfmt -d -i 4 install.sh entrypoint.sh webui.sh bin/pibox lib/*.sh tests/*.sh tests/docker-stub/docker  # стиль: 4 пробела, не табы
 ```
 
 CI (`.github/workflows/ci.yml`): shellcheck + проверка exec-битов + docker build.
+
+Подробно о режимах прогона и docker-заглушке — [docs/TESTS.md](TESTS.md).
 
 ## Правила и подводные камни
 

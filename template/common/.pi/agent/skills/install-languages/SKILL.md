@@ -40,9 +40,9 @@ mise which go    # откуда берётся бинарник
 ## 2. npm — глобальные пакеты без sudo
 
 ```bash
-# ВАЖНО: префикс по умолчанию — /usr/local (внутри образа, НЕ персистентен).
-# Перед первым npm -g переключи на $HOME (создаёт ~/.npmrc — персистентно):
-npm config set prefix ~/.local
+# Prefix уже принудительно настроен entrypoint'ом на ~/.local (персистентно,
+# в отличие от дефолтного /usr/local). Проверка:
+npm config get prefix     # → /home/pi/.local
 npm install -g typescript
 tsc -v                    # бинарник попадёт в ~/.local/bin (уже на PATH)
 ```

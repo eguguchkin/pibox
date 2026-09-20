@@ -182,7 +182,26 @@ ensure_dotfiles() {
     chown "${HOST_UID}:${HOST_GID}" "$PI_HOME"
 }
 
-# --- 4. Git safe.directory (опционально) --------------------------------------
+# --- 4. npm prefix --------------------------------------------------------------
+# По умолчанию npm ставит глобальные пакеты в /usr/local (внутри образа —
+# не персистентно, гибнет при перезапуске). Принудительно направляем prefix
+# в $HOME (bind-mount, персистентно) при каждом запуске.
+# npm config set обновляет точечно: registry, _authToken (npm login) и прочие
+# пользовательские ключи ~/.npmrc не затрагиваются (проверено; комментарии
+# в файле npm перепишет в key=value — файл машиночитаемый, это ок).
+# ВАЖНО: запуск под gosu pi — файл должен принадлежать pi, иначе npm login
+# не сможет его перезаписать (EACCES).
+ensure_npm_prefix() {
+    mkdir -p "$PI_HOME/.local"
+    chown "${HOST_UID}:${HOST_GID}" "$PI_HOME/.local"
+    if ! gosu "${PI_USER}:${PI_GROUP}" npm config set prefix ${PI_HOME}/.local \
+        --userconfig "${PI_HOME}/.npmrc" >/dev/null 2>&1; then
+        warn "npm: не удалось установить prefix=/home/pi/.local " \
+            "(npm install -g будет неперсистентным)"
+    fi
+}
+
+# --- 5. Git safe.directory (опционально) --------------------------------------
 
 setup_git_safe() {
     if [ "${PIBOX_GIT_SAFE:-0}" = "1" ]; then
@@ -260,6 +279,7 @@ Check Dockerfile ENTRYPOINT."
 
     adjust_uid_gid
     ensure_dotfiles
+    ensure_npm_prefix
     setup_git_safe
     prepare_env
     exec_command "$@"
