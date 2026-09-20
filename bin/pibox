@@ -15,7 +15,7 @@ export PIBOX_DIR="${PIBOX_DIR:-$_PIBOX_ROOT}"
 
 # shellcheck disable=SC1091  # пути фиксируются выше
 for _mod in common.sh env.sh docker-cmd.sh ext-manifest.sh \
-    cmd-run.sh cmd-build.sh cmd-env.sh ext-progress.sh \
+    cmd-run.sh cmd-webui.sh cmd-build.sh cmd-env.sh ext-progress.sh \
     cmd-extensions.sh cmd-update.sh cmd-doctor.sh main.sh; do
     # shellcheck source=/dev/null
     source "$_LIB_DIR/$_mod"

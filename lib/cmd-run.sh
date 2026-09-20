@@ -16,7 +16,6 @@ cmd_run() {
     local GIT_SAFE=""
     local DRY_RUN="0"
     local KEEP="0"
-
     # Разбор аргументов для run
     while [[ $# -gt 0 ]]; do
         case "$1" in
@@ -93,6 +92,15 @@ cmd_run() {
         esac
     done
 
+    launch_container
+}
+
+# Общее ядро запуска контейнера: cmd_run и cmd_webui (lib/cmd-webui.sh).
+# Видит локальные переменные вызывающей функции (динамическая область
+# видимости bash): ENV_NAME, CONTAINER_NAME, ENV_FILE, MEMORY, CPUS,
+# PIDS_LIMIT, GIT_SAFE, DRY_RUN, KEEP, PI_ARGS, PUBLISH_OPTS, PASS_ENV_OPTS,
+# а также глобальный флаг WEBUI_MODE (1 = режим pibox webui).
+launch_container() {
     # Дефолты
     ENV_NAME="${ENV_NAME:-$DEFAULT_ENV}"
     CONTAINER_NAME="${CONTAINER_NAME:-pibox-${ENV_NAME}}"
@@ -137,18 +145,47 @@ cmd_run() {
     # иначе docker сделает /home/pi/workspace/<имя> от root внутри env-маунта.
     mkdir -p "$PIBOX_DIR/env/$ENV_NAME/workspace/$(workspace_name)"
 
-    log "Запуск pi в окружении '$ENV_NAME' (контейнер: $CONTAINER_NAME)..."
+    if [[ "${WEBUI_MODE:-0}" == "1" ]]; then
+        log "Запуск web-ui (pi-web-ui) в окружении '$ENV_NAME' (контейнер: $CONTAINER_NAME)..."
+    else
+        log "Запуск pi в окружении '$ENV_NAME' (контейнер: $CONTAINER_NAME)..."
+    fi
+
+    # Автооткрытие браузера (webui): фоновый «ждун» стартует здесь — ПОСЛЕ
+    # удаления старого контейнера, чтобы проба порта не поймала его ещё
+    # живой сокет. Убивается сразу после выхода docker run.
+    local WEBUI_OPEN_PID=""
+    if [[ "${WEBUI_MODE:-0}" == "1" && "${AUTO_OPEN:-1}" == "1" && -t 1 ]]; then
+        webui_wait_and_open "${WEBUI_OPEN_URL}" "${WEBUI_HOST_PORT}" &
+        WEBUI_OPEN_PID=$!
+    fi
 
     # Запуск. Ловим код возврата вручную, чтобы set -e не убил скрипт
     # до обработки cleanup-логики.
     local rc=0
     "${RUN_CMD[@]}" || rc=$?
 
+    # Ждун больше не нужен: браузер открыл (или контейнер умер до готовности —
+    # не должен выдать ложный warning). Уже вышедшего — kill молча проглотит.
+    if [[ -n "$WEBUI_OPEN_PID" ]]; then
+        kill "$WEBUI_OPEN_PID" 2>/dev/null || true
+    fi
+
     # Постобработка: при успехе и без --keep удаляем контейнер.
     # Во всех остальных случаях оставляем и подсказываем, как посмотреть.
-    if [[ $rc -eq 0 && "$KEEP" != "1" ]]; then
+    # В webui-режиме Ctrl+C (SIGINT→130 / SIGTERM→143) — ШТАТНАЯ остановка
+    # сервера, а не сбой: чистим тихо, без «оставлен для отладки».
+    local interrupted=0
+    if [[ "${WEBUI_MODE:-0}" == "1" && ($rc -eq 130 || $rc -eq 143) ]]; then
+        interrupted=1
+    fi
+    if [[ ($rc -eq 0 || $interrupted -eq 1) && "$KEEP" != "1" ]]; then
         docker rm -f "$CONTAINER_NAME" >/dev/null 2>&1 || true
-        log "Контейнер '$CONTAINER_NAME' удалён"
+        if [[ $interrupted -eq 1 ]]; then
+            log "web-ui остановлен (Ctrl+C), контейнер '$CONTAINER_NAME' удалён"
+        else
+            log "Контейнер '$CONTAINER_NAME' удалён"
+        fi
     else
         if [[ $rc -ne 0 ]]; then
             warn "Контейнер завершился с кодом $rc и оставлен для отладки"
@@ -163,5 +200,3 @@ cmd_run() {
 
     return $rc
 }
-
-# Сборка Docker-образа

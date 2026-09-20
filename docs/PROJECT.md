@@ -14,21 +14,23 @@ PIBOX — обвязка вокруг [Pi Coding Agent](https://pi.dev/) (npm: `
 2. **Персистентность** — сессии, конфиги, расширения и тулчейны (mise) живут в каталоге
    окружения на хосте и переживают перезапуск. Несколько изолированных окружений
    (`default`, `php8`, `rust`…) через `pibox -e ИМЯ`.
-3. **Компактный образ** — multi-stage сборка (~0.7 ГБ): Ubuntu 24.04 + Node 24 + Pi + mise
-   + рантайм-зависимости pi-расширений (JRE, tesseract) + make (node-gyp) +
-   shellcheck/shfmt для самопроверки скриптов репо.
-   Тяжёлые тулчейны агент ставит сам через mise в `~/.local` (персистентно).
+3. **Компактный образ** — multi-stage сборка: Ubuntu 24.04 + Node 24 + Pi +
+   pi-web-ui (браузерный UI, `pibox webui`) + mise + рантайм-зависимости
+   pi-расширений (JRE, tesseract) + make (node-gyp) + shellcheck/shfmt для
+   самопроверки скриптов репо. Тяжёлые тулчейны агент ставит сам через mise
+   в `~/.local` (персистентно); g++ живёт только в builder-стадии.
 
 ## Ключевые компоненты репозитория
 
 | Файл | Назначение |
 | --- | --- |
-| `Dockerfile` | multi-stage: ubuntu 24.04 + node 24 + pi + mise; ARG-версии пинуются |
-| `entrypoint.sh` | от root: подстановка UID/GID хост-юзера → dotfiles-слои (заглушка + `.pibox`/`.user`) → gosu → tini → pi |
-| `bin/pibox` + `lib/` | исходник CLI `pibox` (после install — `~/pibox/bin/pibox` + `~/pibox/lib/`); точка входа подгружает модули в фиксированном порядке: `common.sh` (константы, хелперы, usage, проверки) → `env.sh` (окружения) → `docker-cmd.sh` (сборка docker run) → `ext-manifest.sh` (манифест расширений) → `cmd-*.sh` (подкоманды) → `main.sh` (диспетчер). Зависимости только «вниз», циклов нет |
+| `Dockerfile` | multi-stage: ubuntu 24.04 + node 24 + pi + pi-web-ui + mise; ARG-версии пинуются; pi и pi-web-ui ставятся одной npm-командой (общий SDK дедупится в один экземпляр), в builder — временный g++ для node-pty, стрипы платформенного жира |
+| `entrypoint.sh` | от root: подстановка UID/GID хост-юзера → dotfiles-слои (заглушка + `.pibox`/`.user`) → gosu → tini → CMD (по умолчанию `pi`; из `pibox webui` — лаунчер `webui`) |
+| `webui.sh` | лаунчер web-ui в контейнере: зелёная ссылка (хост-порт из `WEBUI_HOST_PORT`) + `exec pi-web-ui --no-browser --host 0.0.0.0`; ставится в `/usr/local/bin/webui` |
+| `bin/pibox` + `lib/` | исходник CLI `pibox` (после install — `~/pibox/bin/pibox` + `~/pibox/lib/`); точка входа подгружает модули в фиксированном порядке: `common.sh` (константы, хелперы, usage, проверки) → `env.sh` (окружения) → `docker-cmd.sh` (сборка docker run + webui-режим) → `ext-manifest.sh` (манифест расширений) → `cmd-*.sh` (подкоманды; `cmd-run.sh` содержит общее ядро `launch_container`, `cmd-webui.sh` его переиспользует) → `main.sh` (диспетчер). Зависимости только «вниз», циклов нет |
 | `install.sh` | установщик: создаёт `~/pibox`, bin в PATH, блок `>>> pibox installer >>>` в rc-файле |
 | `models.json` | шаблон конфига моделей (локальный OpenAI-совместимый сервер по умолчанию) |
-| `env/.template/` | шаблон `/home/pi` для новых окружений + стартовые знания агента (`.pi/agent/AGENTS.md`, скиллы `install-languages`, `workspace-hygiene`, `networking`, `extension-hygiene`) |
+| `env/.template/` | шаблон `/home/pi` для новых окружений + стартовые знания агента (`.pi/agent/AGENTS.md`, скиллы `install-languages`, `workspace-hygiene`, `networking`, `extension-hygiene`, `web-ui`) |
 | `env/extensions.txt` | манифест расширений pi (`npm:имя@версия`); ставятся `pibox extensions install`, аудит — `doctor` (D9) |
 | `tests/smoke.sh` + `tests/helpers.sh` | ~90 автопроверок: install → build → CLI → runtime; флаги `--offline/--keep/--rebuild`; хелперы (счётчики, `expect_*`, `docker_pibox`, очистка) — в `helpers.sh` |
 | `agent/glm/` | план разработки и постановки задач (task1..task9) — история, не runtime-код |
@@ -38,6 +40,9 @@ PIBOX — обвязка вокруг [Pi Coding Agent](https://pi.dev/) (npm: `
 ## Контракты между компонентами (важно при правках)
 
 + entrypoint ↔ Dockerfile: `/opt/skel` (заглушки + `.pibox`-слои + прочие dot-файлы), маркер `PIBOX_SKELETON_V1` в заглушках, переменные `HOST_UID`/`HOST_GID`, юзер `pi`.
++ bin/pibox+lib/cmd-webui.sh ↔ webui.sh (в образе): CLI пробрасывает `-p hp:8787` + `-e PI_WEB_PORT/WEBUI_HOST_PORT`, командой контейнера задаёт `webui`; лаунчер печатает зелёную ссылку `http://localhost:<hp>` и exec'ит pi-web-ui в foreground. Ctrl+C (rc 130/143) — штатная остановка: контейнер тихо удаляется.
++ Автооткрытие браузера — только на хосте (в контейнере браузера нет): `launch_container` после удаления старого контейнера стартует фоновый `webui_wait_and_open` (cmd-webui.sh): опрашивает `127.0.0.1:<host-port>` (curl, fallback `/dev/tcp`) и открывает через `open`/`xdg-open`; PID в `WEBUI_OPEN_PID`, убивается сразу после docker run. Отключение: `--no-open`, нет TTY. Токен из `-E PI_WEB_TOKEN[=v]` подставляется в `?token=` ссылки (URL-safe токены; таймаут пробы — `PIBOX_WEBUI_OPEN_TIMEOUT`, 30с).
++ Dockerfile ↔ pi-web-ui: `ARG PI_WEB_UI_VERSION` пинует версию; pi и pi-web-ui ставятся ОДНОЙ npm-командой — общий `@earendil-works/pi-coding-agent` дедупится в единственный экземпляр (один и тот же SDK у TUI `pi` и webui; последовательные установки не дедупятся — не разносить на два RUN). При несовместимости пинов npm молча ставит вложенную копию — guard («вложенной копии быть не должно») роняет сборку. node-pty собирается в builder (g++/make/python3 apt-стадией) — в runtime только `build/Release/pty.node` + системные `libstdc++6`/`libgcc-s1`. Стрипы: `@esbuild` → одна нативная платформа, `node-pty/prebuilds` (win32) — прочь.
 + entrypoint ↔ файлы home (договор о владельце): весь `/home/pi` — bind-mount хоста, все файлы в нём считаются принадлежащими хост-юзеру (`HOST_UID:HOST_GID`); рекурсивный chown при старте НЕ делается. Владелец чинится только у файлов, копируемых из skel (точечные chown + одноразовый `find -user 0` с `-xdev` внутри первого merge под маркером `.pibox_other_skel_done`). Перенос env между машинами с разным UID — разовый `chown -R` на хосте.
 + bin/pibox+lib/install.sh → шаблон: `PIBOX_DIR/env/<name>`, `PIBOX_DIR/models.json`, `PIBOX_DIR/env/.template/`.
 + install.sh: копирует `bin/pibox` + `lib/` (каталог целиком, mirror-механизм как у `docker/`) → `~/pibox/`, build-контекст → `~/pibox/docker/`. Перезапись CLI+lib/docker/.template — при каждом запуске; `--force` дополнительно удаляет ВСЕ окружения (`env/*`); `models.json` не перезаписывается никогда (API-ключи).
@@ -48,8 +53,8 @@ PIBOX — обвязка вокруг [Pi Coding Agent](https://pi.dev/) (npm: `
 ```bash
 pibox build                    # или docker build
 ./tests/smoke.sh               # полный прогон ~2 мин; --offline / --keep / --rebuild
-shellcheck install.sh entrypoint.sh bin/pibox lib/*.sh tests/smoke.sh tests/helpers.sh   # так же в CI
-shfmt -d -i 4 install.sh entrypoint.sh bin/pibox lib/*.sh tests/smoke.sh tests/helpers.sh  # стиль: 4 пробела, не табы
+shellcheck install.sh entrypoint.sh webui.sh bin/pibox lib/*.sh tests/smoke.sh tests/helpers.sh   # так же в CI
+shfmt -d -i 4 install.sh entrypoint.sh webui.sh bin/pibox lib/*.sh tests/smoke.sh tests/helpers.sh  # стиль: 4 пробела, не табы
 ```
 
 CI (`.github/workflows/ci.yml`): shellcheck + проверка exec-битов + docker build.
@@ -69,7 +74,8 @@ CI (`.github/workflows/ci.yml`): shellcheck + проверка exec-битов +
   `recheck.jar` из pi-mcp-adapter (быстрый аудит RegEx; без java — медленный JS-фолбэк);
   `tesseract-ocr` + eng/rus traineddata — встроенный OCR для pi-docparser;
   `make` — сборочная утилита для node-gyp (нативные npm-модули); `gcc` вне образа
-  (инвариант №4) — полные native-сборки через mise.
+  (инвариант №4) — полные native-сборки через mise. g++ в builder существует
+  только ради node-pty и не попадает в runtime.
 + **npm-кэш — `~/.npm`, персистентен в env**: скачанное однажды не перекачивается,
   но кэш раздувается (~400 МБ при активных установках) — чистка `npm cache clean --force`.
   (Кэш в `/opt/npm-cache` пробовали — откатили: контейнерный слой эфемерен, записи

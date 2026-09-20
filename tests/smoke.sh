@@ -229,6 +229,32 @@ expect_ok "B4: тяжёлых тулчейнов в образе нет" docker 
 expect_ok "B5: пользователь pi (uid 1000) и /opt/skel" docker run --rm "$IMAGE" \
     bash -c '[ "$(id -u pi)" = 1000 ] && [ -f /opt/skel/.bashrc ] && [ -f /opt/skel/.profile ]'
 
+# B6: pi-web-ui вшит в образ: бинарники, нативный node-pty (собран в builder),
+# дедуп SDK через симлинк, стрипы платформенного жира
+expect_ok "B6: pi-web-ui и лаунчер webui в PATH" docker run --rm "$IMAGE" \
+    bash -c 'command -v pi-web-ui webui'
+# shellcheck disable=SC2016
+expect_ok "B6: нативный node-pty загружается" docker run --rm "$IMAGE" \
+    node -e "require('/usr/local/lib/node_modules/pi-web-ui/node_modules/node-pty')"
+# shellcheck disable=SC2016
+expect_ok "B6: дедуп: вложенной копии SDK нет (единое дерево, один SDK у TUI и webui)" docker run --rm "$IMAGE" \
+    bash -c '[ ! -e /usr/local/lib/node_modules/pi-web-ui/node_modules/@earendil-works ] && [ -d /usr/local/lib/node_modules/@earendil-works/pi-coding-agent ]'
+case "$(uname -m)" in
+x86_64 | amd64) ESB_KEEP="linux-x64" ;;
+aarch64 | arm64) ESB_KEEP="linux-arm64" ;;
+*) ESB_KEEP="" ;;
+esac
+if [ -n "$ESB_KEEP" ]; then
+    # shellcheck disable=SC2016
+    expect_ok "B6: esbuild-стрип: только ${ESB_KEEP}" docker run --rm "$IMAGE" \
+        bash -c "[ \"\$(ls -1 /usr/local/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/@esbuild)\" = ${ESB_KEEP} ]"
+else
+    skip "B6: esbuild-стрип — неизвестная архитектура $(uname -m)"
+fi
+# shellcheck disable=SC2016
+expect_ok "B6: win32-пребилды node-pty вырезаны" docker run --rm "$IMAGE" \
+    bash -c '[ ! -d /usr/local/lib/node_modules/pi-web-ui/node_modules/node-pty/prebuilds ]'
+
 # ============================================================================
 # Фаза 3: CLI pibox (dry-run)
 # ============================================================================
@@ -323,6 +349,82 @@ else
     fail "C14: dry-run с --memory 2g завершился с ошибкой"
 fi
 expect_contains "C14: лимит переопределён" "$DRY5" "--memory 2g"
+
+# C21: webui dry-run — авто-публикация порта и команда контейнера `webui`
+DRYW=""
+if DRYW="$(cd "$TEST_WS" && "$BIN" webui --dry-run 2>/dev/null)"; then
+    ok "C21: pibox webui --dry-run"
+else
+    fail "C21: pibox webui --dry-run завершился с ошибкой"
+fi
+expect_contains "C21: авто -p 8787:8787" "$DRYW" "-p 8787:8787"
+expect_contains "C21: команда контейнера — webui" "$DRYW" "$IMAGE webui"
+expect_contains "C21: PI_WEB_PORT передан" "$DRYW" "-e PI_WEB_PORT=8787"
+expect_contains "C21: WEBUI_HOST_PORT для ссылки" "$DRYW" "-e WEBUI_HOST_PORT=8787"
+
+# C22: webui --port 9999 — другой и хост-, и контейнерный порт
+DRYW2=""
+if DRYW2="$(cd "$TEST_WS" && "$BIN" webui --dry-run --port 9999 2>/dev/null)"; then
+    ok "C22: webui --dry-run --port 9999"
+else
+    fail "C22: webui --port 9999 завершился с ошибкой"
+fi
+expect_contains "C22: -p 9999:9999" "$DRYW2" "-p 9999:9999"
+expect_contains "C22: PI_WEB_PORT=9999" "$DRYW2" "-e PI_WEB_PORT=9999"
+expect_contains "C22: WEBUI_HOST_PORT=9999" "$DRYW2" "-e WEBUI_HOST_PORT=9999"
+
+# C23: свой -p на порт webui — дубль не добавляется, ссылка берёт хост-порт юзера
+DRYW3=""
+if DRYW3="$(cd "$TEST_WS" && "$BIN" webui --dry-run -p 19000:8787 2>/dev/null)"; then
+    ok "C23: webui -p 19000:8787"
+else
+    fail "C23: webui -p 19000:8787 завершился с ошибкой"
+fi
+expect_contains "C23: маппинг юзера сохранён" "$DRYW3" "-p 19000:8787"
+if printf '%s' "$DRYW3" | grep -qF -- '-p 8787:8787'; then
+    fail "C23: авто -p 8787:8787 не должен добавляться при своём маппинге"
+else
+    ok "C23: авто -p не дублируется"
+fi
+expect_contains "C23: ссылка использует хост-порт юзера" "$DRYW3" "-e WEBUI_HOST_PORT=19000"
+
+# C24: webui не принимает аргументы pi после --
+if (cd "$TEST_WS" && "$BIN" webui --dry-run -- extra 2>/dev/null); then
+    fail "C24: webui -- extra должен отклоняться"
+else
+    ok "C24: webui -- extra отклонён"
+fi
+
+# C25: автооткрытие браузера в dry-run — URL виден, токен из -E подставлен
+DRYW4=""
+if DRYW4="$(cd "$TEST_WS" && "$BIN" webui --dry-run 2>/dev/null)"; then
+    ok "C25: webui --dry-run (автооткрытие)"
+else
+    fail "C25: webui --dry-run завершился с ошибкой"
+fi
+expect_contains "C25: URL автооткрытия без токена" "$DRYW4" "браузер откроется автоматически: http://localhost:8787"
+
+DRYW5=""
+if DRYW5="$(cd "$TEST_WS" && PI_WEB_TOKEN=секрет "$BIN" webui --dry-run -E PI_WEB_TOKEN 2>/dev/null)"; then
+    ok "C25: webui --dry-run с -E PI_WEB_TOKEN"
+else
+    fail "C25: webui --dry-run с токеном завершился с ошибкой"
+fi
+expect_contains "C25: токен подставлен в URL" "$DRYW5" "/?token=секрет"
+
+# C26: --no-open отключает автооткрытие
+DRYW6=""
+if DRYW6="$(cd "$TEST_WS" && "$BIN" webui --dry-run --no-open 2>/dev/null)"; then
+    ok "C26: webui --dry-run --no-open"
+else
+    fail "C26: webui --dry-run --no-open завершился с ошибкой"
+fi
+expect_contains "C26: автооткрытие выключено" "$DRYW6" "автооткрытие браузера выключено"
+if printf '%s' "$DRYW6" | grep -qF 'браузер откроется автоматически'; then
+    fail "C26: при --no-open URL автооткрытия печататься не должен"
+else
+    ok "C26: URL автооткрытия не печатается"
+fi
 
 # C15: env list
 if REPLY="$("$BIN" env list 2>/dev/null)"; then
@@ -463,7 +565,7 @@ fi
 
 group "C20: расширения (манифест + extensions install + doctor D9)"
 
-expect_contains "C20: манифест в установке" "$(cat "$TEST_PIBOX/env/extensions.txt")" "npm:pi-lens@4.1.6"
+expect_contains "C20: манифест в установке" "$(cat "$TEST_PIBOX/env/extensions.txt")" "npm:pi-lens@4.2.1"
 
 # регрессия: инлайн-комментарий с вторым '#' (напр. "[Image #N]") не должен
 # попадать в запись — раньше ${line%\#*} обрезал по ПОСЛЕДНЕМУ '#', и мусор
@@ -477,7 +579,7 @@ if bash -c '
     for e in "${EXT_ENTRIES[@]}"; do
         case "$e" in *"#"*) exit 1 ;; esac
     done
-' "$TEST_PIBOX"; then
+' smoke-manifest-fixture "$TEST_PIBOX"; then
     ok "C20: инлайн-комментарии манифеста срезаны до первого '#'"
 else
     fail "C20: в записях манифеста остался мусор от инлайн-комментариев"
@@ -801,6 +903,42 @@ if [ -d "$ENV_E2E" ]; then
 else
     fail "R19: окружение smoke-env не создано (см. C10)"
 fi
+
+# --- R20: webui (pi-web-ui) — лаунчер, health через проброшенный порт ---
+# Запуск как это делает `pibox webui`: команда контейнера `webui`, порт 8787
+# наружу (host-порт случайный, чтобы не конфликтовать с чужим 8787).
+WEBUI_NAME="pibox-smoke-webui"
+CLEANUP_CONTAINERS+=("$WEBUI_NAME")
+WEBUI_PORT=$(((RANDOM % 20000) + 20000))
+if [ -d "$ENV_E2E" ] && docker run -d --rm --name "$WEBUI_NAME" \
+    -p "127.0.0.1:${WEBUI_PORT}:8787" \
+    --add-host host.docker.internal:host-gateway \
+    --cap-add SYS_PTRACE --cap-add NET_RAW \
+    -e "HOST_UID=$HOST_UID" -e "HOST_GID=$HOST_GID" \
+    -v "$ENV_E2E:/home/pi" -v "$TEST_WS:/home/pi/workspace" \
+    -w /home/pi/workspace \
+    "$IMAGE" webui >/dev/null 2>&1; then
+    ok "R20: webui-контейнер запущен"
+    HEALTH=""
+    for _ in $(seq 1 60); do
+        if HEALTH="$(curl -fsS "http://127.0.0.1:${WEBUI_PORT}/api/health" 2>/dev/null)"; then
+            break
+        fi
+        sleep 0.5
+    done
+    if [ -n "$HEALTH" ]; then
+        ok "R20: /api/health отвечает через проброшенный порт"
+        expect_contains "R20: engine=pi в health" "$HEALTH" '"engine":"pi"'
+    else
+        fail "R20: /api/health не ответил за 30 с"
+    fi
+    WEBUI_LOGS="$(docker logs "$WEBUI_NAME" 2>&1 || true)"
+    expect_contains "R20: зелёная ссылка в логах" "$WEBUI_LOGS" "web-ui: http://localhost:8787"
+    expect_contains "R20: ANSI-зелёный у ссылки" "$WEBUI_LOGS" $'\033[32m'
+else
+    fail "R20: не удалось запустить webui-контейнер"
+fi
+docker rm -f "$WEBUI_NAME" >/dev/null 2>&1 || true
 
 # ============================================================================
 # Итог

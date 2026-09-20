@@ -95,7 +95,8 @@ pibox
 
 | Команда | Описание |
 | --- | --- |
-| `pibox [run] [ОПЦИИ] [--] [PI_ARGS…]` | Запуск агента (run — по умолчанию) |
+| `pibox [run] [ОПЦИИ] [--] [PI_ARGS…]` | Запуск агента в TUI (run — по умолчанию) |
+| `pibox webui [ОПЦИИ] [--port N]` | Агент с браузерным UI ([pi-web-ui](https://github.com/xing-shuyin/pi-web-ui), вшит в образ): пробрасывает порт (по умолчанию `8787:8787`), сам открывает страницу в браузере (готовность порта ждёт фоновый waiter; `--no-open` отключает), печатает зелёную ссылку, дальше в консоль идут логи агента; Ctrl+C — остановка. Опции как у run (`-e`, `-p`, `-E`, `--memory`, …); `--port N` — другой порт (хост и контейнер) |
 | `pibox build [--no-cache]` | Сборка Docker-образа |
 | `pibox env list` | Список окружений |
 | `pibox env create ИМЯ` | Создать окружение из шаблона |
@@ -136,6 +137,9 @@ cd pibox && git pull && ./install.sh
 
 ```bash
 pibox                          # default-окружение в текущем проекте
+pibox webui                    # браузерный UI агента: http://localhost:8787
+                               # (те же сессии/модели, что у TUI; Ctrl+C — стоп)
+pibox webui --port 9000        # то же, но порт 9000 (занят 8787 и т.п.)
 pibox -e php8                  # отдельное окружение (создаётся пустым из шаблона —
                                # PHP появится, когда попросите агента поставить)
 pibox -p 3000:3000             # dev-сервер в контейнере → localhost:3000
@@ -268,6 +272,9 @@ php -v; go version           # переживают перезапуск кон�
 | git: `detected dubious ownership` | Владелец workspace ≠ UID контейнера. Запускайте `pibox --git-safe` — включает `safe.directory`, не трогая ваши файлы |
 | `bind: permission denied` на порту <1024 | У агента нет `CAP_NET_BIND_SERVICE`. Сервер внутри — на порт >1024, наружу любой: `-p 80:8080` |
 | `host.docker.internal` не резолвится | Docker < 20.10 — обновите Docker |
+| `pibox webui`: порт 8787 занят на хосте | `pibox webui --port 9000` или свой маппинг `pibox webui -p 19000:8787` |
+| `pibox webui`: образ без pi-web-ui (собран до этой фичи) | Пересоберите: `pibox build` (версии пинуются в Dockerfile) |
+| web-ui нужен из LAN | `pibox webui -p 0.0.0.0:8787:8787` + токен: `PI_WEB_TOKEN=секрет pibox webui -E PI_WEB_TOKEN`, вход `http://host:8787/?token=секрет`. **Без токена в LAN не пускать**; при `-E PI_WEB_TOKEN` автооткрытие подставит токен в ссылку само |
 | `strace -p PID` / `tcpdump` от pi падают | Известное ограничение: gosu сбрасывает capabilities при смене UID. `ping` и трассировка собственных потомков работают |
 | `pibox: command not found` после install | PATH обновился — `exec $SHELL -l` или новый терминал |
 | `bad interpreter: /usr/bin/env^M` | CRLF в скриптах: `git add --renormalize .` (`.gitattributes` настроен) |
@@ -283,15 +290,17 @@ php -v; go version           # переживают перезапуск кон�
 
 ```
 pibox/
-├── Dockerfile          # multi-stage: ubuntu 24.04 + node 24 + pi + mise
-├── entrypoint.sh       # UID/GID, dotfiles-слои, gosu→tini→pi
+├── Dockerfile          # multi-stage: ubuntu 24.04 + node 24 + pi + pi-web-ui + mise
+├── entrypoint.sh       # UID/GID, dotfiles-слои, gosu→tini→CMD (pi | webui)
+├── webui.sh            # лаунчер web-ui в контейнере (→ /usr/local/bin/webui)
 ├── bin/
 │   └── pibox           # точка входа CLI: source lib/* → main
 ├── lib/                # модули CLI (source'ятся в фиксированном порядке)
 │   ├── common.sh       # константы, хелперы вывода, usage, проверки
 │   ├── env.sh          # окружения: create/copy_models_json/list
-│   ├── docker-cmd.sh   # сборка docker run команды
-│   ├── cmd-run.sh      # pibox run
+│   ├── docker-cmd.sh   # сборка docker run команды (+webui-режим)
+│   ├── cmd-run.sh      # pibox run + общее ядро launch_container
+│   ├── cmd-webui.sh    # pibox webui
 │   ├── cmd-build.sh    # pibox build
 │   ├── cmd-env.sh      # pibox env / pibox shell
 │   ├── ext-manifest.sh # чтение манифеста расширений

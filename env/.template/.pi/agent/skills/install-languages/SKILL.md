@@ -62,6 +62,16 @@ qmd --version
 mise пробрасывает пакеты через свои шимы — бинарник доступен на PATH как обычный.
 Шаблон: `mise use -g npm:<имя-пакета>` для любого npm-пакета с нативными сборками.
 
+**Важно:** это работает только если install-скрипты пакета опциональны (без
+нативного ускорения пакет работает; пример — tree-sitter у `@tobilu/qmd`).
+mise НЕ выполняет lifecycle-скрипты — пакет с ОБЯЗАТЕЛЬНОЙ нативной сборкой
+(node-gyp в postinstall) ставится молча сломанным. Для таких пакетов:
+временный тулчейн `mise use -g conda:gcc@14 conda:gxx@14` (только conda:gxx
+даёт g++ с заголовками) → `npm i -g --allow-scripts=… пакет` → тулчейн
+удалить: `mise uninstall conda:gcc@14.4.0 conda:gxx@14.4.0` + вручную
+убрать [tools]-строки conda:* из ~/.config/mise/config.toml (`mise use -g
+--remove` не годится — возвращает тулы как latest) → `mise reshim`.
+
 ## 3. Python — только через venv (PEP 668)
 
 `pip install` в системный python падает (`externally-managed-environment`) — это не баг:

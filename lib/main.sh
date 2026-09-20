@@ -25,6 +25,9 @@ main() {
     shell)
         cmd_shell "$@"
         ;;
+    webui)
+        cmd_webui "$@"
+        ;;
     update)
         cmd_update "$@"
         ;;

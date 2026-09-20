@@ -4,10 +4,22 @@
 # Глобальный массив, в который собирается готовая команда docker run.
 RUN_CMD=()
 
+# Глобальный флаг режима `pibox webui` (1 = включён). Устанавливает
+# lib/cmd-webui.sh ДО вызова launch_container; docker-cmd добавляет
+# проброс webui-порта и команду контейнера `webui`, entrypoint-контракт
+# — в webui.sh и Dockerfile.
+WEBUI_MODE=0
+WEBUI_PORT=8787
+WEBUI_HOST_PORT=""
+# URL и флаг автооткрытия браузера (заполняет cmd-webui.sh до launch_container;
+# дефолты здесь — чтобы файл проходил shellcheck автономно).
+WEBUI_OPEN_URL=""
+AUTO_OPEN=1
+
 # Заполняет RUN_CMD аргументами для docker run.
 # Использует переменные окружения: ENV_NAME, CONTAINER_NAME, MEMORY, CPUS,
 # PIDS_LIMIT, GIT_SAFE, ENV_FILE, а также массивы
-# PUBLISH_OPTS, PASS_ENV_OPTS и PI_ARGS (видны динамически из cmd_run).
+# PUBLISH_OPTS, PASS_ENV_OPTS и PI_ARGS (види мы динамически из cmd_run).
 build_docker_run_cmd() {
     RUN_CMD=(
         "docker" "run"
@@ -45,6 +57,25 @@ build_docker_run_cmd() {
         RUN_CMD+=("-p" "$opt")
     done
 
+    # Режим pibox webui: сервер внутри слушает PI_WEB_PORT (лаунчер webui.sh);
+    # WEBUI_HOST_PORT — для зелёной ссылки. Авто -p добавляем, только если
+    # юзер не пробросил свой маппинг на контейнерный порт webui.
+    if [[ "$WEBUI_MODE" == "1" ]]; then
+        local hp="${WEBUI_HOST_PORT:-$WEBUI_PORT}"
+        local mapped=""
+        for opt in ${PUBLISH_OPTS[@]+"${PUBLISH_OPTS[@]}"}; do
+            # формат [host_ip:]host_port:container_port[/proto] или bare-порт
+            local cport="${opt##*:}"
+            cport="${cport%/*}"
+            [[ "$cport" == "$WEBUI_PORT" ]] && mapped=1
+        done
+        [[ -n "$mapped" ]] || RUN_CMD+=("-p" "${hp}:${WEBUI_PORT}")
+        RUN_CMD+=("-e" "PI_WEB_PORT=${WEBUI_PORT}")
+        RUN_CMD+=("-e" "WEBUI_HOST_PORT=${hp}")
+        # -it добавлен ниже по TTY-проверке: логи сервера и агента идут в этот
+        # же терминал; Ctrl+C останавливает контейнер.
+    fi
+
     # Проброс переменных окружения
     for opt in ${PASS_ENV_OPTS[@]+"${PASS_ENV_OPTS[@]}"}; do
         RUN_CMD+=("-e" "$opt")
@@ -65,10 +96,15 @@ build_docker_run_cmd() {
     # Образ и команда
     RUN_CMD+=("$IMAGE_NAME")
 
-    # Аргументы pi (после --)
-    for opt in ${PI_ARGS[@]+"${PI_ARGS[@]}"}; do
-        RUN_CMD+=("$opt")
-    done
+    if [[ "$WEBUI_MODE" == "1" ]]; then
+        # Лаунчер вместо дефолтного pi: зелёная ссылка + exec pi-web-ui
+        RUN_CMD+=("webui")
+    else
+        # Аргументы pi (после --)
+        for opt in ${PI_ARGS[@]+"${PI_ARGS[@]}"}; do
+            RUN_CMD+=("$opt")
+        done
+    fi
 }
 
 # Печатает команду в shell-escape виде (для --dry-run)
@@ -79,4 +115,13 @@ print_run_cmd() {
         printf ' %q' "$a"
     done
     printf '\n'
+    # webui: показать и то, что произойдёт после запуска (автооткрытие браузера)
+    if [[ "${WEBUI_MODE:-0}" == "1" ]]; then
+        if [[ "${AUTO_OPEN:-1}" == "1" ]]; then
+            printf 'DRY RUN: браузер откроется автоматически: %s (--no-open отключает)\n' \
+                "${WEBUI_OPEN_URL:-http://localhost:${WEBUI_HOST_PORT:-8787}}"
+        else
+            printf 'DRY RUN: автооткрытие браузера выключено (--no-open)\n'
+        fi
+    fi
 }

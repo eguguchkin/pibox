@@ -11,25 +11,93 @@
 #  3. glibc-инвариант: база builder по glibc НЕ НОВЕЕ базы runtime:
 #     bookworm (2.36) <= noble (2.39). Бинарники под старую glibc работают
 #     на новой, обратное — нет. НЕ переводить builder на trixie (2.41).
-#  4. Тяжёлые тулчейны (cmake, gdb, rustc, ...) в образ НЕ ставятся: их
-#     агент ставит сам через mise в ~/.local — персистентно в env.
-#  5. Multi-stage: npm-кэш и мусор установки остаются в builder.
+#  4. Тяжёлые тулчейны (cmake, gdb, rustc, gcc, ...) в RUNTIME-образ НЕ
+#     ставятся: их агент ставит сам через mise в ~/.local (персистентно в
+#     env). Сборочные инструменты (g++) живут ТОЛЬКО в builder-стадии —
+#     нужны node-gyp для нативной сборки node-pty (терминал pi-web-ui).
+#  5. Multi-stage: npm-кэш, мусор установки и тулчейны остаются в builder.
+#  6. pi-web-ui вшит в /usr/local рядом с pi (это платформенная команда
+#     pibox webui, а не зависимость проекта). Оба пакета ставятся ОДНОЙ
+#     npm-командой: общий @earendil-works/pi-coding-agent дедупится в
+#     единственный экземпляр (один и тот же SDK у TUI и webui); версии
+#     пинуются ARG'ами, при расхождении сборка падает (guard ниже).
+#     Данные UI — в env (~/.pi-web).
 # ============================================================================
 
 ARG UBUNTU_VERSION=24.04
 ARG NODE_IMAGE=node:24-bookworm-slim
 ARG PI_VERSION=0.85.1
+ARG PI_WEB_UI_VERSION=0.91.0
 
-# ── Stage 1: builder — node + npm + pi в /usr/local ─────────────────────────
+# ── Stage 1: builder — node + npm + pi + pi-web-ui в /usr/local ───────────────
 FROM ${NODE_IMAGE} AS builder
 ARG PI_VERSION
+ARG PI_WEB_UI_VERSION
 
-# --ignore-scripts обязателен: pi не требует lifecycle-скриптов (задача 1),
-# а флаг отсекает выполнение произвольного postinstall-кода при сборке.
-RUN npm install -g --ignore-scripts "@earendil-works/pi-coding-agent@${PI_VERSION}" \
+# Тулчейн ТОЛЬКО на время сборки (в runtime-образ не попадает — инвариант №4):
+# g++/make/python3 нужны node-gyp для компиляции node-pty (нативный C++,
+# linux-пребилдов у пакета нет). glibc-инвариант №3: собранное на bookworm
+# (2.36) работает на noble (2.39); libstdc++6/libgcc-s1 есть в базовом ubuntu.
+RUN apt-get update \
+ && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+      g++ make python3 \
+ && rm -rf /var/lib/apt/lists/*
+
+# pi + pi-web-ui ОДНОЙ командой: npm строит единое дерево и поднимает общие
+# зависимости в корень /usr/local — в том числе @earendil-works/pi-coding-agent
+# (полноценный SDK: один и тот же экземпляр работает в TUI `pi` и в webui).
+# Последовательные установки НЕ дедупятся (каждая тащит свою вложенную копию
+# SDK, +440 МБ) — не разносить на два RUN.
+# Lifecycle-скрипты — как --ignore-scripts (задача 1: отсекает произвольный
+# postinstall-код), но с точечным allow-списком — только два пакета, чьи
+# скрипты реально нужны (остальные скрипты дерева — no-op или отсутствуют):
+#   node-pty — ОБЯЗАТЕЛЬНАЯ нативная сборка (терминал webui);
+#   esbuild  — валидация/подмена платформенного бинаря (fallback-путь —
+#              скачивание из npm в рантайме, недопустимо в offline-образе).
+RUN npm install -g \
+      --allow-scripts=node-pty,esbuild \
+      "@earendil-works/pi-coding-agent@${PI_VERSION}" \
+      "pi-web-ui@${PI_WEB_UI_VERSION}" \
  && npm cache clean --force
-# Итог: /usr/local/{bin/{node,npm,npx,pi}, include/node, lib/node_modules/...}
+# Итог: /usr/local/{bin/{node,npm,npx,pi,pi-web-ui}, include/node, lib/node_modules/...}
 # npm-кэш (/root/.npm) остаётся в builder — в runtime не попадает.
+
+# Защита от расхождения пинов: если PI_VERSION перестал удовлетворять
+# диапазону pi-web-ui (например, webui уже требует ^0.86, а пин — 0.85.x),
+# npm МОЛЧА поставит совместимую вложенную копию SDK внутрь pi-web-ui
+# → два SDK: TUI на пине, webui на вложенной. Единое дерево = один SDK:
+# вложенной копии быть не должно.
+RUN set -eux; \
+    nested="/usr/local/lib/node_modules/pi-web-ui/node_modules/@earendil-works"; \
+    if [ -e "$nested" ]; then \
+        echo "FATAL: pi-web-ui получил собственную вложенную копию @earendil-works/pi-coding-agent — пин PI_VERSION=${PI_VERSION} несовместим с pi-web-ui@${PI_WEB_UI_VERSION}. Выровняйте PI_VERSION / PI_WEB_UI_VERSION."; \
+        exit 1; \
+    fi
+
+# Стрип платформенного жира (~300 МБ):
+#  - @esbuild: все ~23 платформы → только нативная (esbuild — рантайм-зависимость
+#    pi; платформенные пакеты — optionalDependencies, пересборка не нужна);
+#  - node-pty/prebuilds: win32-бинари, в Linux мертвы (нативная сборка —
+#    в build/Release/pty.node).
+RUN set -eux; \
+    esb="/usr/local/lib/node_modules/@earendil-works/pi-coding-agent/node_modules/@esbuild"; \
+    case "$(uname -m)" in \
+        x86_64)  keep="linux-x64" ;; \
+        aarch64) keep="linux-arm64" ;; \
+        *)       keep="" ;; \
+    esac; \
+    if [ -n "$keep" ] && [ -d "$esb/$keep" ]; then \
+        find "$esb" -mindepth 1 -maxdepth 1 -type d ! -name "$keep" -exec rm -rf {} +; \
+    fi; \
+    rm -rf /usr/local/lib/node_modules/pi-web-ui/node_modules/node-pty/prebuilds
+
+# Сборочные проверки: нативный node-pty загружается (CJS); webui-резолв
+# общего SDK работает как в рантайме — через ESM-import (exports-карта SDK
+# не определяет CJS-точку, require.resolve невозможен по построению).
+RUN cd /usr/local/lib/node_modules/pi-web-ui/dist/server \
+ && node -e "require('/usr/local/lib/node_modules/pi-web-ui/node_modules/node-pty')" \
+ && node --input-type=module -e "await import('@earendil-works/pi-coding-agent'); \
+             console.log('pi-web-ui native deps OK')"
 
 # ── Stage 2: runtime — ubuntu 24.04 + базовый набор ─────────────────────────
 FROM ubuntu:${UBUNTU_VERSION}
@@ -82,8 +150,12 @@ RUN locale-gen en_US.UTF-8 && update-locale LANG=en_US.UTF-8
 ENV LANG=en_US.UTF-8 \
     LC_ALL=en_US.UTF-8
 
-# — node + npm + pi из builder (одним COPY) —
+# — node + npm + pi + pi-web-ui (с собранным node-pty) из builder (одним COPY) —
 COPY --from=builder /usr/local/ /usr/local/
+
+# — лаунчер web-ui: команда контейнера для `pibox webui` (зелёная ссылка +
+#   exec pi-web-ui); контракт — в webui.sh —
+COPY --chmod=755 webui.sh /usr/local/bin/webui
 
 # --- mise: глобальный бинарник ---
 # Используем официальный установщик с MISE_INSTALL_PATH

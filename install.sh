@@ -221,6 +221,7 @@ check_sources() {
         "lib/cmd-env.sh"
         "lib/cmd-extensions.sh"
         "lib/cmd-run.sh"
+        "lib/cmd-webui.sh"
         "lib/cmd-update.sh"
         "lib/env.sh"
         "lib/ext-manifest.sh"
@@ -228,6 +229,7 @@ check_sources() {
         "lib/main.sh"
         "Dockerfile"
         "entrypoint.sh"
+        "webui.sh"
         ".dockerignore"
         "models.json"
         "env/.template/README.md"
@@ -269,7 +271,7 @@ install() {
     log "Обновляю build-контекст в docker/"
     safe_rm_rf "$target_docker"
     mkdir -p "$target_docker"
-    for file in Dockerfile entrypoint.sh .dockerignore; do
+    for file in Dockerfile entrypoint.sh webui.sh .dockerignore; do
         log "Копирую: $file → docker/"
         cp "$SRC_DIR/$file" "$target_docker/"
     done

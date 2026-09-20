@@ -1,7 +1,9 @@
-# Build-контекст минимален: для сборки образа нужны только Dockerfile
-# и entrypoint.sh. CLI, установщик, шаблоны, тесты и документация
-# в образ не попадают (после install.sh контекст живёт в PIBOX_DIR/docker/).
+# Build-контекст минимален: для сборки образа нужны только Dockerfile,
+# entrypoint.sh и webui.sh (лаунчер web-ui). CLI, установщик, шаблоны, тесты
+# и документация в образ не попадают (после install.sh контекст живёт в
+# PIBOX_DIR/docker/).
 *
 !Dockerfile
 !entrypoint.sh
+!webui.sh
 !.dockerignore

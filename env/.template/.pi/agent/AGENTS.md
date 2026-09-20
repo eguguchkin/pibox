@@ -32,6 +32,10 @@ python venv (PEP 668). Детали — скилл install-languages (загру
 Скилл networking (dev-серверы, порты, host.docker.internal, диагностика). Кратко:
 
 - порт <1024 внутри не открыть; серверы слушать на 0.0.0.0;
+- браузерный UI агента: запускается с хоста `pibox webui` (порт публикуется
+  автоматически, по умолчанию 8787); pi-web-ui вшит в образ — внутри
+  контейнера ничего ставить не нужно; данные UI — `~/.pi-web`, сессии/модели
+  общие с TUI; подробности — скилл web-ui.
 - хост-сервисы — `host.docker.internal` (локальная модель API на хосте —
   `http://host.docker.internal:PORT/v1`).
 
@@ -40,8 +44,12 @@ python venv (PEP 668). Детали — скилл install-languages (загру
 - Системный pip заблокирован (PEP 668, `externally-managed-environment`) — только venv.
 - `~/.npmrc` нет по умолчанию → первый `npm install -g` может упасть с EACCES —
   `npm config set prefix ~/.local` (см. скилл install-languages).
-- Пакеты с нативной сборкой (node-gyp, tree-sitter) через `npm -g` не ставятся —
-  make есть в образе, но gcc нет; обход: `mise use -g npm:<пакет>` (см. скилл install-languages).
+- Пакеты с нативной сборкой (node-gyp, tree-sitter): gcc в образе нет, а
+  `mise use -g npm:<пакет>` не выполняет lifecycle-скрипты — пакет с
+  обязательной нативной сборкой встанет молча сломанным. Обход для
+  обязательных сборок — временный тулчейн `mise use -g conda:gcc@14
+  conda:gxx@14` → `npm i -g --allow-scripts=… пакет` → тулчейн удалить
+  (см. скилл install-languages).
 - Сеть открыта (если хост не ограничил): curl/wget/git работают.
 - Инструменты: есть curl, dig, nslookup, ss; нет nc, telnet, traceroute, sudo.
 - Capabilities сбрасываются: strace чужих процессов и tcpdump не работают.
