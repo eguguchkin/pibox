@@ -44,6 +44,15 @@ cmd_extensions() {
         die "образ $IMAGE_NAME не найден — соберите: pibox build"
     fi
 
+    # Install-скрипты (npm 11.19+, RFC npm/rfcs#868): без одобрения npm молча
+    # пропускает их — у нативных пакетов без пребилдов (better-sqlite3 для
+    # context-mode) не собирается биндинг и расширение молча не работает.
+    # Переменная-одобрение ВСЕХ скриптов действует только здесь — в командах
+    # установки из манифеста (кураторский запиненный набор); ручной `pi install`
+    # внутри окружения остаётся под дефолтным гейтом npm (pending-варнинги,
+    # npm install-scripts approve — по необходимости).
+    local ext_install_env=("npm_config_dangerously_allow_all_scripts=true")
+
     local nm="$env_dir/.pi/agent/npm/node_modules"
     local total=${#EXT_ENTRIES[@]}
     local installed=0 skipped=0 failed=0 idx=0
@@ -166,6 +175,7 @@ cmd_extensions() {
                 # Атомарность дописывания: одиночный printf со встроенными \n.
                 if docker run --rm \
                     -e "HOST_UID=$(id -u)" -e "HOST_GID=$(id -g)" \
+                    "${ext_install_env[@]+"${ext_install_env[@]}"}" \
                     -v "$env_dir:/home/pi" \
                     "$IMAGE_NAME" pi install "$entry" 2>&1 | while IFS= read -r line; do
                     printf '%s\n' "$line" >>"$fulllog"
