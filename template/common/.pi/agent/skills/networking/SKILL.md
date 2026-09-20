@@ -15,8 +15,10 @@ description: Сеть в контейнере pibox — dev-серверы, пу
 
 - Слушать `0.0.0.0`, НЕ `127.0.0.1` — иначе сервер недоступен даже через
   опубликованный порт.
-- Порты <1024 не открыть (нет CAP_NET_BIND_SERVICE): внутри — 3000/8080/etc,
-  наружу маппится любой (`-p 80:8080`).
+- Привилегированные порты (<1024): на части хостов bind на них работает
+  (docker с `ip_unprivileged_port_start=0`, например Docker Desktop), на
+  обычном Linux — нет (CAP_NET_BIND_SERVICE сброшена). Не полагайся на низкие
+  порты — внутри контейнера слушай ≥1024, наружу мапится любой (`-p 80:8080`).
 - Пример: `uvicorn --host 0.0.0.0 --port 8000` → на хосте `localhost:8000`
   (если pibox запущен с `-p 8000:8000`).
 
@@ -27,7 +29,7 @@ description: Сеть в контейнере pibox — dev-серверы, пу
 
 ## Инструменты
 
-- Есть: `curl`, `dig`, `nslookup`, `ss`. Нет: `nc`, `telnet`, `traceroute`.
+- Есть: `curl`, `wget`, `dig`, `nslookup`, `ss`, `ping`. Нет: `nc`, `telnet`, `traceroute`.
 - Проверить порт без nc: `(echo >/dev/tcp/host/port) 2>/dev/null && echo open`
 - Что слушает процесс: `ss -tlnp`
 

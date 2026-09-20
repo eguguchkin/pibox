@@ -72,9 +72,11 @@ npm cache clean --force                         # ~/.npm/_cacache
 ## Шаг 4. Верификация (обязательно после удаления)
 
 Список проверяемых пакетов = нативные/критичные зависимости **активных**
-расширений (на 2026-09: context-mode → better-sqlite3; pi-docparser →
-liteparse; pi-lens → ast-grep). Перед удалением чего-либо убедись, что его
-никто не использует:
+расширений — определи по манифесту и `node_modules` (примеры из типового
+набора: context-mode → better-sqlite3; pi-docparser → @llamaindex/liteparse;
+pi-lens → @ast-grep/*; @zzz210s/pi-codegraph → tree-sitter-грамматики;
+@nklisch/pi-fff-compat → @ff-labs/fff-bin-*). Перед удалением чего-либо
+убедись, что его никто не использует:
 
 ```bash
 cd ~/.pi/agent/npm
@@ -86,7 +88,8 @@ done
 grep -rln "<pkg>" node_modules/*/extensions node_modules/@*/*/extensions 2>/dev/null
 ```
 
-Верификация живости:
+Верификация живости (пример — подставь свои пакеты; путь sg-бинарника
+зависит от архитектуры: `@ast-grep/cli-linux-<arch>-gnu`):
 
 ```bash
 cd ~/.pi/agent/npm && node -e "
@@ -97,7 +100,7 @@ cd ~/.pi/agent/npm && node -e "
   await t('liteparse', () => import('@llamaindex/liteparse'));
   await t('ast-grep', () => import('@ast-grep/napi'));
 })()"
-~/.pi/agent/npm/node_modules/@ast-grep/cli-linux-arm64-gnu/sg --version
+ls ~/.pi/agent/npm/node_modules/@ast-grep/cli-linux-*-gnu/sg >/dev/null && echo "sg: OK"
 ```
 
 Если что-то FAIL — восстанови пакет: `cd ~/.pi/agent/npm && npm install`.

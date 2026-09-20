@@ -18,7 +18,7 @@ description: Установка языков и тулчейнов в конте
 
 ## 1. mise — основной способ
 
-Шимы уже на PATH (`~/.local/share/mise/shims`), `mise activate` прописан в `~/.bashrc`.
+Шимы уже на PATH (`~/.local/share/mise/shims`), `mise activate` подключён в `~/.bashrc.pibox`.
 
 ```bash
 # глобально в ОКРУЖЕНИЕ (переживает перезапуск, видно во всех проектах этого env):
@@ -40,8 +40,8 @@ mise which go    # откуда берётся бинарник
 ## 2. npm — глобальные пакеты без sudo
 
 ```bash
-npm config get prefix     # должен быть /home/pi/.local
-# если нет или при EACCES:
+# ВАЖНО: префикс по умолчанию — /usr/local (внутри образа, НЕ персистентен).
+# Перед первым npm -g переключи на $HOME (создаёт ~/.npmrc — персистентно):
 npm config set prefix ~/.local
 npm install -g typescript
 tsc -v                    # бинарник попадёт в ~/.local/bin (уже на PATH)
