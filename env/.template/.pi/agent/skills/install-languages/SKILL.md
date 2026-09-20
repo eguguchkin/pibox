@@ -47,30 +47,22 @@ npm install -g typescript
 tsc -v                    # бинарник попадёт в ~/.local/bin (уже на PATH)
 ```
 
-### Пакеты с нативной сборкой — через mise, НЕ через npm -g
+### Пакеты с нативной сборкой — через mise или npm -g
 
-Если пакет тянет node-gyp/tree-sitter (ошибки вида `gyp ERR!`, `gcc:
-command not found`): в образе `make` есть, но `gcc` нет, и apt недоступен.
-Пример:
-`@tobilu/qmd` (зависимости tree-sitter-*). Решение:
+Если пакет тянет node-gyp/tree-sitter: в образе есть `make` **и `g++`**
+(node-gyp собирает напрямую), apt недоступен. Пример:
+`@tobilu/qmd` (зависимости tree-sitter-*).
+
+Для пакета с ОБЯЗАТЕЛЬНОЙ нативной сборкой (node-gyp в postinstall):
 
 ```bash
-mise use -g npm:@tobilu/qmd   # mise ставит в ~/.local/share/mise, сборка проходит
-qmd --version
+npm i -g --allow-scripts=… пакет   # g++ уже в образе, собирается штатно
 ```
 
-mise пробрасывает пакеты через свои шимы — бинарник доступен на PATH как обычный.
-Шаблон: `mise use -g npm:<имя-пакета>` для любого npm-пакета с нативными сборками.
-
-**Важно:** это работает только если install-скрипты пакета опциональны (без
-нативного ускорения пакет работает; пример — tree-sitter у `@tobilu/qmd`).
-mise НЕ выполняет lifecycle-скрипты — пакет с ОБЯЗАТЕЛЬНОЙ нативной сборкой
-(node-gyp в postinstall) ставится молча сломанным. Для таких пакетов:
-временный тулчейн `mise use -g conda:gcc@14 conda:gxx@14` (только conda:gxx
-даёт g++ с заголовками) → `npm i -g --allow-scripts=… пакет` → тулчейн
-удалить: `mise uninstall conda:gcc@14.4.0 conda:gxx@14.4.0` + вручную
-убрать [tools]-строки conda:* из ~/.config/mise/config.toml (`mise use -g
---remove` не годится — возвращает тулы как latest) → `mise reshim`.
+mise-вариант (`mise use -g npm:<имя>`) подходит, только если install-скрипты
+опциональны (без нативного ускорения пакет работает): mise НЕ выполняет
+lifecycle-скрипты — обязательная сборка встанет молча сломанной. Тяжёлые
+тулчейны (rust/go/cmake) — через `mise use -g` как обычно.
 
 ## 3. Python — только через venv (PEP 668)
 

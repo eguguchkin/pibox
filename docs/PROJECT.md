@@ -16,26 +16,29 @@ PIBOX — обвязка вокруг [Pi Coding Agent](https://pi.dev/) (npm: `
    (`default`, `php8`, `rust`…) через `pibox -e ИМЯ`.
 3. **Компактный образ** — multi-stage сборка: Ubuntu 24.04 + Node 24 + Pi +
    pi-web-ui (браузерный UI, `pibox webui`) + mise + рантайм-зависимости
-   pi-расширений (JRE, tesseract) + make (node-gyp) + shellcheck/shfmt для
-   самопроверки скриптов репо. Тяжёлые тулчейны агент ставит сам через mise
-   в `~/.local` (персистентно); g++ живёт только в builder-стадии.
+   pi-расширений (JRE, tesseract) + `make`/`g++`/`python3` для node-gyp +
+   shellcheck/shfmt для самопроверки скриптов репо. Компилятор в runtime —
+   осознанное исключение из инварианта №4: нативные зависимости расширений
+   без prebuilds (tree-sitter у pi-codegraph и т.п.) иначе требуют
+   mise-тулчейна (~70с скачивания) на каждую установку в новое окружение.
+   Остальные тяжёлые тулчейны (rust, go, cmake) агент ставит сам через mise
+   в `~/.local` (персистентно).
 
 ## Ключевые компоненты репозитория
 
 | Файл | Назначение |
 | --- | --- |
-| `Dockerfile` | multi-stage: ubuntu 24.04 + node 24 + pi + pi-web-ui + mise; ARG-версии пинуются; pi и pi-web-ui ставятся одной npm-командой (общий SDK дедупится в один экземпляр), в builder — временный g++ для node-pty, стрипы платформенного жира |
+| `Dockerfile` | multi-stage: ubuntu 24.04 + node 24 + pi + pi-web-ui + mise; ARG-версии пинуются; pi и pi-web-ui ставятся одной npm-командой (общий SDK дедупится в один экземпляр), g++ для node-pty в builder и в runtime для нативных сборок расширений, стрипы платформенного жира |
 | `entrypoint.sh` | от root: подстановка UID/GID хост-юзера → dotfiles-слои (заглушка + `.pibox`/`.user`) → gosu → tini → CMD (по умолчанию `pi`; из `pibox webui` — лаунчер `webui`) |
 | `webui.sh` | лаунчер web-ui в контейнере: зелёная ссылка (хост-порт из `WEBUI_HOST_PORT`) + `exec pi-web-ui --no-browser --host 0.0.0.0`; ставится в `/usr/local/bin/webui` |
 | `bin/pibox` + `lib/` | исходник CLI `pibox` (после install — `~/pibox/bin/pibox` + `~/pibox/lib/`); точка входа подгружает модули в фиксированном порядке: `common.sh` (константы, хелперы, usage, проверки) → `env.sh` (окружения) → `docker-cmd.sh` (сборка docker run + webui-режим) → `ext-manifest.sh` (манифест расширений) → `cmd-*.sh` (подкоманды; `cmd-run.sh` содержит общее ядро `launch_container`, `cmd-webui.sh` его переиспользует) → `main.sh` (диспетчер). Зависимости только «вниз», циклов нет |
 | `install.sh` | установщик: создаёт `~/pibox`, bin в PATH, блок `>>> pibox installer >>>` в rc-файле |
 | `models.json` | шаблон конфига моделей (локальный OpenAI-совместимый сервер по умолчанию) |
-| `env/.template/` | шаблон `/home/pi` для новых окружений + стартовые знания агента (`.pi/agent/AGENTS.md`, скиллы `install-languages`, `workspace-hygiene`, `networking`, `extension-hygiene`, `web-ui`) |
+| `env/.template/` | шаблон `/home/pi` для новых окружений + стартовые знания агента (`.pi/agent/AGENTS.md`, скиллы `install-languages`, `workspace-hygiene`, `networking`, `extension-hygiene`) |
 | `env/extensions.txt` | манифест расширений pi (`npm:имя@версия`); ставятся `pibox extensions install`, аудит — `doctor` (D9) |
-| `tests/smoke.sh` + `tests/helpers.sh` | ~90 автопроверок: install → build → CLI → runtime; флаги `--offline/--keep/--rebuild`; хелперы (счётчики, `expect_*`, `docker_pibox`, очистка) — в `helpers.sh` |
-| `agent/glm/` | план разработки и постановки задач (task1..task9) — история, не runtime-код |
+| `tests/smoke.sh` + `tests/helpers.sh` | >100 автопроверок: install → build → CLI → runtime; флаги `--offline/--keep/--rebuild`; хелперы (счётчики, `expect_*`, `docker_pibox`, очистка) — в `helpers.sh` |
 
-Каталога `docs/` в репо пока нет (упоминается в README, но не создан).
+`docs/` содержит только этот файл (`PROJECT.md`).
 
 ## Контракты между компонентами (важно при правках)
 
@@ -73,9 +76,9 @@ CI (`.github/workflows/ci.yml`): shellcheck + проверка exec-битов +
   не задет, через mise их не поставить): `default-jre-headless` — рантайм для
   `recheck.jar` из pi-mcp-adapter (быстрый аудит RegEx; без java — медленный JS-фолбэк);
   `tesseract-ocr` + eng/rus traineddata — встроенный OCR для pi-docparser;
-  `make` — сборочная утилита для node-gyp (нативные npm-модули); `gcc` вне образа
-  (инвариант №4) — полные native-сборки через mise. g++ в builder существует
-  только ради node-pty и не попадает в runtime.
+  `make` + `g++` — тулчейн node-gyp для нативных зависимостей расширений без
+  prebuilds (tree-sitter у pi-codegraph и т.п.); тяжёлые тулчейны (rust, go, cmake)
+  остаются через mise. g++ в builder — для node-pty (терминал webui).
 + **npm-кэш — `~/.npm`, персистентен в env**: скачанное однажды не перекачивается,
   но кэш раздувается (~400 МБ при активных установках) — чистка `npm cache clean --force`.
   (Кэш в `/opt/npm-cache` пробовали — откатили: контейнерный слой эфемерен, записи

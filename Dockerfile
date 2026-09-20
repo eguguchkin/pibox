@@ -11,10 +11,13 @@
 #  3. glibc-инвариант: база builder по glibc НЕ НОВЕЕ базы runtime:
 #     bookworm (2.36) <= noble (2.39). Бинарники под старую glibc работают
 #     на новой, обратное — нет. НЕ переводить builder на trixie (2.41).
-#  4. Тяжёлые тулчейны (cmake, gdb, rustc, gcc, ...) в RUNTIME-образ НЕ
+#  4. Тяжёлые тулчейны (cmake, gdb, rustc, ...) в RUNTIME-образ НЕ
 #     ставятся: их агент ставит сам через mise в ~/.local (персистентно в
-#     env). Сборочные инструменты (g++) живут ТОЛЬКО в builder-стадии —
-#     нужны node-gyp для нативной сборки node-pty (терминал pi-web-ui).
+#     env). Исключение — g++: node-gyp-сборки нативных зависимостей
+#     расширений (tree-sitter у pi-codegraph и т.п.) не имеют prebuilds
+#     под все платформы, а mise-тулчейн в одноразовом контейнере
+#     extensions-install качается ~70с при каждой установке в новый env.
+#     Полноценные тулчейны (rust, go и пр.) — по-прежнему mise.
 #  5. Multi-stage: npm-кэш, мусор установки и тулчейны остаются в builder.
 #  6. pi-web-ui вшит в /usr/local рядом с pi (это платформенная команда
 #     pibox webui, а не зависимость проекта). Оба пакета ставятся ОДНОЙ
@@ -122,17 +125,19 @@ LABEL org.opencontainers.image.title="pibox" \
 #   tesseract-ocr + eng/rus     — встроенный OCR для pi-docparser
 #                                 (document_parse: ocrLanguage/tessdataPath);
 #                                 поставить в рантайме нельзя (apt/sudo нет)
-#   make                        — сборочная утилита для node-gyp (нативные
-#                                 npm-модули). gcc остаётся вне образа
-#                                 (инвариант №4) — полные native-сборки
-#                                 по-прежнему через mise (см. AGENTS.md)
+#   make + g++                  — тулчейн node-gyp (нативные npm-модули):
+#                                 make закрывает компиляции с prebuild-фолбэком,
+#                                 g++ — полноценные нативные сборки зависимостей
+#                                 расширений (tree-sitter у pi-codegraph и т.п.).
+#                                 Тяжёлые тулчейны (rust, go) — через mise
+#                                 (инвариант №4)
 RUN apt-get update \
  && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
       ca-certificates locales tzdata lsb-release gosu tini \
       less grep sed gawk diffutils file xxd procps psmisc tmux \
       curl wget openssl iproute2 iputils-ping openssh-client dnsutils lsof \
       git tar gzip unzip zip rsync bzip2 xz-utils zstd lz4 \
-      make \
+      make g++ \
       python3 python3-pip python3-venv \
       jq ripgrep yq vim htop ncdu hexedit \
       shellcheck shfmt \

@@ -315,11 +315,10 @@ pibox/
 │   ├── .template/      # шаблон /home/pi для новых окружений (точка — glob '*' его не матчит)
 │   └── <имя>/          # живые окружения (не коммитятся)
 ├── tests/
-│   ├── smoke.sh        # ~90 автопроверок: install→build→CLI→runtime
-│   └── ACCEPTANCE.md   # ручной чеклист приёмки
+│   ├── smoke.sh        # >100 автопроверок: install→build→CLI→runtime
+│   └── helpers.sh      # счётчики, expect_*, docker_pibox, очистка
 ├── docs/
-│   ├── NOTES.md        # технические факты, находки, зафиксированные версии
-│   └── CONVENTIONS.md  # соглашения по коду
+│   └── PROJECT.md      # описание проекта, контракты, подводные камни
 └── .github/workflows/ci.yml  # shellcheck + exec-биты + docker build
 ```
 
@@ -335,8 +334,6 @@ PIBOX_IMAGE=pibox:test ./tests/smoke.sh
 shellcheck install.sh entrypoint.sh bin/pibox lib/*.sh tests/smoke.sh tests/helpers.sh   # как в CI
 shfmt -d -i 4 install.sh entrypoint.sh bin/pibox lib/*.sh tests/smoke.sh tests/helpers.sh  # стиль: 4 пробела, не табы
 ```
-
-Ручная приёмка: `tests/ACCEPTANCE.md` — 7 сценариев (~30 мин).
 
 ### Обновление версий
 
