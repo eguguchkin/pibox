@@ -99,20 +99,24 @@ cmd_doctor() {
         d_info "доступные окружения: ${available:-()пусто)}"
     fi
 
-    # D5: каркас окружения — то, что есть в источниках, должно быть и в окружении.
-    # Источник зависит от файла: models.json живёт в корне репо (в шаблон не
-    # копируется, раскладывается по окружениям при первом запуске), остальное —
-    # в env/.template.
-    local template_dir="$PIBOX_DIR/env/.template"
+    # D5: каркас окружения — то, что есть в слоях, должно быть и в окружении.
+    # Слой 1 (template/common) — начальное состояние; слой 2 (template/user) —
+    # инварианты, применяется при каждом запуске (apply_user_layer).
+    local template_dir="$PIBOX_DIR/template/common"
+    local user_dir="$PIBOX_DIR/template/user"
     if [[ "$env_ok" == "0" ]]; then
         if [[ -d "$template_dir" ]]; then
             local rel src e_path
-            for rel in .pi/agent/AGENTS.md .pi/agent/models.json .pi/agent/skills; do
-                if [[ "$rel" == ".pi/agent/models.json" ]]; then
-                    src="$PIBOX_DIR/models.json"
-                else
-                    src="$template_dir/$rel"
-                fi
+            # слой 1: продуктовый каркас (путь в common — источник common,
+            # перекрыт в user — источник user: инвариант владельца сильнее)
+            local -a skel_paths=(".pi/agent/AGENTS.md" ".pi/agent/skills")
+            layer_user_paths
+            for rel in ${LAYER_USER_PATHS[@]+"${LAYER_USER_PATHS[@]}"}; do
+                skel_paths+=("$rel")
+            done
+            for rel in "${skel_paths[@]}"; do
+                src="$template_dir/$rel"
+                [[ -f "$user_dir/$rel" ]] && src="$user_dir/$rel"
                 e_path="$env_dir/$rel"
                 [[ -e "$src" ]] || continue
                 if [[ -e "$e_path" ]]; then
@@ -129,7 +133,26 @@ cmd_doctor() {
                 fi
             done
         else
-            d_err "шаблон окружения не найден: $template_dir — переустановите pibox: install.sh"
+            d_err "шаблон не найден: $template_dir — переустановите pibox: install.sh"
+        fi
+
+        # Слой 2: применён ли, есть ли дрейф
+        if [[ -d "$user_dir" ]]; then
+            layers_drift "$env_name"
+            if [[ ${#LAYER_DRIFT_PATHS[@]} -eq 0 ]]; then
+                d_ok "слой user: применён, дрейфа нет"
+            else
+                d_warn "слой user: дрейф ${#LAYER_DRIFT_PATHS[@]} файл(ов) (env ≠ template/user) — pibox user pull -e $env_name"
+            fi
+            local ovl=0 orel osrc
+            while IFS= read -r osrc; do
+                orel="${osrc#"$user_dir"/}"
+                [[ -f "$template_dir/$orel" ]] && ovl=$((ovl + 1))
+            done < <(find "$user_dir" -type f 2>/dev/null)
+            [[ "$ovl" -gt 0 ]] &&
+                d_info "слой user: $ovl файл(ов) перекрывает common"
+        else
+            d_info "слой user отсутствует (не настраивался)"
         fi
     fi
 
@@ -266,7 +289,7 @@ cmd_doctor() {
         d_info "контейнер $cname не запущен (это нормально; запуск: pibox run -e $env_name)"
     fi
 
-    # D9: расширения — сверка окружения с манифестом env/extensions.txt
+    # D9: расширения — сверка окружения с манифестом template/extensions.txt
     # (нужен jq; без него проверка пропускается). Три вида расхождений:
     #   отсутствует пакет (WARN)  — установка: pibox extensions install
     #   версия не совпадает (WARN) — обновление той же командой

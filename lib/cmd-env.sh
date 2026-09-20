@@ -14,7 +14,6 @@ cmd_env() {
         local env_name="$1"
         validate_env_name "$env_name"
         create_env "$env_name"
-        copy_models_json "$env_name"
         log "Окружение '$env_name' создано"
         ;;
     remove)
@@ -60,7 +59,6 @@ cmd_shell() {
 
     validate_env_name "$env_name"
     create_env "$env_name"
-    copy_models_json "$env_name"
     check_workspace_isolation
 
     check_docker
@@ -85,7 +83,7 @@ cmd_shell() {
         "$IMAGE_NAME" bash
 }
 
-# Установка расширений из манифеста env/extensions.txt.
+# Установка расширений из манифеста template/extensions.txt.
 #
 # Каждый пакет ставится отдельным запуском pi внутри одноразового контейнера
 # (смонтирован только env; workspace не нужен — npm-установки ни от него

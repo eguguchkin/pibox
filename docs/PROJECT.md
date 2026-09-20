@@ -33,9 +33,9 @@ PIBOX — обвязка вокруг [Pi Coding Agent](https://pi.dev/) (npm: `
 | `webui.sh` | лаунчер web-ui в контейнере: зелёная ссылка (хост-порт из `WEBUI_HOST_PORT`) + `exec pi-web-ui --no-browser --host 0.0.0.0`; ставится в `/usr/local/bin/webui` |
 | `bin/pibox` + `lib/` | исходник CLI `pibox` (после install — `~/pibox/bin/pibox` + `~/pibox/lib/`); точка входа подгружает модули в фиксированном порядке: `common.sh` (константы, хелперы, usage, проверки) → `env.sh` (окружения) → `docker-cmd.sh` (сборка docker run + webui-режим) → `ext-manifest.sh` (манифест расширений) → `cmd-*.sh` (подкоманды; `cmd-run.sh` содержит общее ядро `launch_container`, `cmd-webui.sh` его переиспользует) → `main.sh` (диспетчер). Зависимости только «вниз», циклов нет |
 | `install.sh` | установщик: создаёт `~/pibox`, bin в PATH, блок `>>> pibox installer >>>` в rc-файле |
-| `models.json` | шаблон конфига моделей (локальный OpenAI-совместимый сервер по умолчанию) |
-| `env/.template/` | шаблон `/home/pi` для новых окружений + стартовые знания агента (`.pi/agent/AGENTS.md`, скиллы `install-languages`, `workspace-hygiene`, `networking`, `extension-hygiene`) |
-| `env/extensions.txt` | манифест расширений pi (`npm:имя@версия`); ставятся `pibox extensions install`, аудит — `doctor` (D9) |
+| `template/common/` | СЛОЙ 1: начальное состояние окружений — стартовые знания агента (`.pi/agent/AGENTS.md`, скиллы `install-languages`, `workspace-hygiene`, `networking`, `extension-hygiene`, `show-image`, расширение `terminal-probe`) |
+| `template/user/` | СЛОЙ 2: личные инварианты — `models.json`, `USER.md`, личные расширения (`selectel-thinking-off.ts`), конфиги (`pi-image-gen/`); в репо — заглушки, реальные значения — в установке |
+| `template/extensions.txt` | манифест расширений pi (`npm:имя@версия`); ставятся `pibox extensions install`, аудит — `doctor` (D9) |
 | `tests/smoke.sh` + `tests/helpers.sh` | >100 автопроверок: install → build → CLI → runtime; флаги `--offline/--keep/--rebuild`; хелперы (счётчики, `expect_*`, `docker_pibox`, очистка) — в `helpers.sh` |
 
 `docs/` содержит только этот файл (`PROJECT.md`).
@@ -47,8 +47,8 @@ PIBOX — обвязка вокруг [Pi Coding Agent](https://pi.dev/) (npm: `
 + Автооткрытие браузера — только на хосте (в контейнере браузера нет): `launch_container` после удаления старого контейнера стартует фоновый `webui_wait_and_open` (cmd-webui.sh): опрашивает `127.0.0.1:<host-port>` (curl, fallback `/dev/tcp`) и открывает через `open`/`xdg-open`; PID в `WEBUI_OPEN_PID`, убивается сразу после docker run. Отключение: `--no-open`, нет TTY. Токен из `-E PI_WEB_TOKEN[=v]` подставляется в `?token=` ссылки (URL-safe токены; таймаут пробы — `PIBOX_WEBUI_OPEN_TIMEOUT`, 30с).
 + Dockerfile ↔ pi-web-ui: `ARG PI_WEB_UI_VERSION` пинует версию; pi и pi-web-ui ставятся ОДНОЙ npm-командой — общий `@earendil-works/pi-coding-agent` дедупится в единственный экземпляр (один и тот же SDK у TUI `pi` и webui; последовательные установки не дедупятся — не разносить на два RUN). При несовместимости пинов npm молча ставит вложенную копию — guard («вложенной копии быть не должно») роняет сборку. node-pty собирается в builder (g++/make/python3 apt-стадией) — в runtime только `build/Release/pty.node` + системные `libstdc++6`/`libgcc-s1`. Стрипы: `@esbuild` → одна нативная платформа, `node-pty/prebuilds` (win32) — прочь.
 + entrypoint ↔ файлы home (договор о владельце): весь `/home/pi` — bind-mount хоста, все файлы в нём считаются принадлежащими хост-юзеру (`HOST_UID:HOST_GID`); рекурсивный chown при старте НЕ делается. Владелец чинится только у файлов, копируемых из skel (точечные chown + одноразовый `find -user 0` с `-xdev` внутри первого merge под маркером `.pibox_other_skel_done`). Перенос env между машинами с разным UID — разовый `chown -R` на хосте.
-+ bin/pibox+lib/install.sh → шаблон: `PIBOX_DIR/env/<name>`, `PIBOX_DIR/models.json`, `PIBOX_DIR/env/.template/`.
-+ install.sh: копирует `bin/pibox` + `lib/` (каталог целиком, mirror-механизм как у `docker/`) → `~/pibox/`, build-контекст → `~/pibox/docker/`. Перезапись CLI+lib/docker/.template — при каждом запуске; `--force` дополнительно удаляет ВСЕ окружения (`env/*`); `models.json` не перезаписывается никогда (API-ключи).
++ bin/pibox+lib/install.sh → шаблон: `PIBOX_DIR/env/<name>`, `PIBOX_DIR/template/{common,user}`.
++ install.sh: копирует `bin/pibox` + `lib/` (каталог целиком, mirror-механизм как у `docker/`) → `~/pibox/`, build-контекст → `~/pibox/docker/`. Перезапись CLI+lib/docker/`template/common` — при каждом запуске; `template/user` — аддитивно (`cp -Rn`), правки и ключи не трогаются; `--force` дополнительно удаляет ВСЕ окружения (`env/*`).
 + Модель API с хоста доступна из контейнера как `http://host.docker.internal:8080`.
 
 ## Как проверять изменения
@@ -90,7 +90,7 @@ CI (`.github/workflows/ci.yml`): shellcheck + проверка exec-битов +
   `rm ~/.pi/agent/npm/node_modules/@llamaindex/liteparse/liteparse.linux-x64-gnu.node`
   (на arm64-хосте; на amd64 он наоборот рабочий — сверяться с `uname -m`).
 + **Расширения pi дистрибутируются манифестом, не бинарниками**: в репо —
-  только `env/extensions.txt` (список `npm:имя@точно-заплиненная-версия`;
+  только `template/extensions.txt` (список `npm:имя@точно-заплиненная-версия`;
   копируется инсталлером в `~/pibox/env/`, там пользователь может править
   свой набор). Установка — `pibox extensions install [-e ИМЯ]`: одноразовый
   контейнер с примонтированным env, по одному `pi install` на пакет;
@@ -111,7 +111,7 @@ CI (`.github/workflows/ci.yml`): shellcheck + проверка exec-битов +
   в коммите теряют портируемость репо.
 + Файлы окружения (`env/*`, кроме шаблонов) при переустановке не затрагивать.
 + **Расширение terminal-probe** (в `.pi/extensions/` проекта, `~/.pi/agent/extensions/`
-  и `env/.template/.pi/agent/extensions/` шаблона): инструмент `terminal_probe` —
+  и `template/common/.pi/agent/extensions/` шаблона): инструмент `terminal_probe` —
   запускает консольную команду под настоящим pty (через системный `script`, без
   нативных модулей), эмулирует терминал и пишет текстовые снимки экрана по кадрам
   (`frames/NNNN_<сек>s.txt`: сетка символов, ANSI-цвета, шапка с курсором/alt-screen;
@@ -124,14 +124,16 @@ CI (`.github/workflows/ci.yml`): shellcheck + проверка exec-битов +
 + Запуск pibox из самого `~/pibox` блокируется (защита от саморедактирования).
 + Порты <1024 внутри контейнера недоступны (нет CAP_NET_BIND_SERVICE) — маппить наружу.
 + Известные ограничения: capabilities сбрасываются после gosu (strace -p, tcpdump от pi).
-+ **Шаблон несёт стартовые знания агента** (`env/.template/.pi/agent/`): глобальный
-  AGENTS.md и скиллы. Каждое новое окружение сразу «обучено». Копии: при изменении
-  скиллов/инструкций обновлять в обоих местах — home текущего окружения
-  (`~/.pi/agent/`) и шаблон в репо.
++ **Шаблон двухслойный** (`template/`, см. LAYERS.md): слой 1 `common` — продукт
+  (`.pi/agent/AGENTS.md`, скиллы), применяется при создании окружения;
+  слой 2 `user` — личные инварианты (ключи, `USER.md`, личные расширения),
+  применяется при каждом запуске (`apply_user_layer` в lib/layers.sh).
+  Каждое новое окружение сразу «обучено»; правки из env забираются
+  осознанно: `pibox user pull`.
 
 ## Принятые решения
 
-+ **Знания агента живут в двух местах:** шаблон (`env/.template/.pi/agent/`) — для новых
++ **Знания агента живут в двух местах:** шаблон (`template/{common,user}/.pi/agent/`) — для новых
   окружений, home текущего окружения (`~/.pi/agent/`) — рабочие копии, которые агент
   редактирует по ходу жизни. Синхронизация обратной стороны (env → шаблон) — вручную,
   осознанно: рабочие окружения пользователей не должны молча переучиваться при

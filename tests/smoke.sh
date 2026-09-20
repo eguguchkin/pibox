@@ -121,7 +121,10 @@ else
     die "I2: install.sh завершился с ошибкой — дальнейшие тесты бессмысленны"
 fi
 
-for path in bin/pibox docker/Dockerfile docker/entrypoint.sh docker/.dockerignore models.json; do
+for path in bin/pibox docker/Dockerfile docker/entrypoint.sh docker/.dockerignore \
+    template/README.md template/extensions.txt \
+    template/common/.pi/agent/AGENTS.md \
+    template/user/.pi/agent/models.json; do
     if [ -e "$TEST_PIBOX/$path" ]; then
         ok "I3: структура: ${path}"
     else
@@ -131,11 +134,12 @@ done
 
 if [ -x "$BIN" ]; then ok "I4: bin/pibox исполняемый"; else fail "I4: bin/pibox не исполняемый"; fi
 
-# I5: повторная установка без --force: скрипты/docker/шаблон обновляются
-# ВСЕГДА, models.json и env/* не трогаются
+# I5: повторная установка без --force: скрипты/docker/слой 1 обновляются
+# ВСЕГДА; template/user (слой 2) и env/* не трогаются
 touch -t 202001010000 "$BIN"
 OLD_BIN_MTIME="$(file_mtime "$BIN")"
-echo "// smoke-sentinel" >>"$TEST_PIBOX/models.json"
+USER_MODELS="$TEST_PIBOX/template/user/.pi/agent/models.json"
+echo "// smoke-sentinel" >>"$USER_MODELS"
 echo "// smoke-sentinel" >>"$TEST_PIBOX/docker/Dockerfile"
 
 if "$SRC_DIR/install.sh" --dir "$TEST_PIBOX" --no-path --src "$SRC_DIR" >/dev/null 2>&1; then
@@ -153,14 +157,14 @@ if grep -qF "smoke-sentinel" "$TEST_PIBOX/docker/Dockerfile"; then
 else
     ok "I5: docker/Dockerfile перезаписан (всегда)"
 fi
-if grep -qF "smoke-sentinel" "$TEST_PIBOX/models.json"; then
-    ok "I5: models.json не перезаписан"
+if grep -qF "smoke-sentinel" "$USER_MODELS"; then
+    ok "I5: template/user не перезаписан (слой 2 аддитивен)"
 else
-    fail "I5: models.json перезаписан"
+    fail "I5: template/user перезаписан"
 fi
 
 # I6: --force удаляет ВСЕ окружения (env/*), default пересоздаётся из
-# шаблона; models.json не трогается даже при --force
+# шаблонов; template/user не трогается даже при --force
 echo keepme >"$TEST_PIBOX/env/default/.smoke-sentinel"
 touch -t 202001010000 "$BIN"
 OLD_BIN_MTIME="$(file_mtime "$BIN")"
@@ -181,14 +185,14 @@ else
     ok "I6: --force удалил env/default (sentinel исчез)"
 fi
 if [ -d "$TEST_PIBOX/env/default" ]; then
-    ok "I6: env/default пересоздан из шаблона"
+    ok "I6: env/default пересоздан из шаблонов"
 else
     fail "I6: env/default не пересоздан после --force"
 fi
-if grep -qF "smoke-sentinel" "$TEST_PIBOX/models.json"; then
-    ok "I6: models.json не тронут даже при --force"
+if grep -qF "smoke-sentinel" "$USER_MODELS"; then
+    ok "I6: template/user не тронут даже при --force"
 else
-    fail "I6: models.json перезаписан при --force"
+    fail "I6: template/user перезаписан при --force"
 fi
 
 # ============================================================================
@@ -286,9 +290,14 @@ expect_contains "C8: cwd контейнера = подкаталог проек�
 expect_contains "C9: HOST_UID передаётся" "$DRY" "-e HOST_UID=$HOST_UID"
 expect_contains "C9: HOST_GID передаётся" "$DRY" "-e HOST_GID=$HOST_GID"
 if [ -f "$TEST_PIBOX/env/default/.pi/agent/models.json" ]; then
-    ok "C3: models.json скопирован в default при первом dry-run"
+    ok "C3: models.json из слоя user в default при первом dry-run"
 else
     fail "C3: models.json не скопирован в env/default"
+fi
+if [ -f "$TEST_PIBOX/env/default/.pi/agent/USER.md" ]; then
+    ok "C3: USER.md из слоя user в default"
+else
+    fail "C3: USER.md не скопирован в env/default"
 fi
 
 # C10: кастомное окружение — автосоздание + models.json
@@ -302,9 +311,9 @@ expect_contains "C10: mount кастомного env" "$DRY2" "-v $TEST_PIBOX/en
 if [ -d "$TEST_PIBOX/env/smoke-env" ]; then ok "C10: окружение создано"; else fail "C10: окружение не создано"; fi
 MODELS_DST="$TEST_PIBOX/env/smoke-env/.pi/agent/models.json"
 if [ -f "$MODELS_DST" ]; then
-    ok "C10: models.json скопирован в окружение"
-    if cmp -s "$TEST_PIBOX/models.json" "$MODELS_DST"; then
-        ok "C10: содержимое models.json совпадает с шаблоном"
+    ok "C10: models.json из слоя user в окружении"
+    if cmp -s "$TEST_PIBOX/template/user/.pi/agent/models.json" "$MODELS_DST"; then
+        ok "C10: содержимое models.json совпадает со слоем user"
     else
         fail "C10: models.json отличается от шаблона"
     fi
@@ -321,6 +330,72 @@ else
     fail "C11: повторный dry-run завершился с ошибкой"
 fi
 expect_eq "C11: models.json не пересоздаётся" "$OLD_MODELS_MTIME" "$(file_mtime "$MODELS_DST")"
+
+# C27: слой user — push/pull/dry-run/opt-out
+# C27.1: правка в template/user доезжает до env при следующем запуске
+printf '\n# c27-marker\n' >>"$TEST_PIBOX/template/user/.pi/agent/USER.md"
+if (cd "$TEST_WS" && "$BIN" --dry-run -e smoke-env >/dev/null 2>&1); then
+    ok "C27: запуск с правкой слоя user прошёл"
+else
+    fail "C27: запуск с правкой слоя user упал"
+fi
+if grep -qF 'c27-marker' "$TEST_PIBOX/env/smoke-env/.pi/agent/USER.md"; then
+    ok "C27: правка template/user доехала в env"
+else
+    fail "C27: правка template/user не доехала в env"
+fi
+
+# C27.2: правка в env (не в слое) — дрейф; pull -n не пишет; pull забирает
+printf '# c27-agent-edit\n' >>"$TEST_PIBOX/env/smoke-env/.pi/agent/USER.md"
+if (cd "$TEST_WS" && "$BIN" user pull -e smoke-env -n >/dev/null 2>&1); then
+    ok "C27: user pull -n прошёл"
+else
+    fail "C27: user pull -n упал"
+fi
+if ! grep -qF 'c27-agent-edit' "$TEST_PIBOX/template/user/.pi/agent/USER.md"; then
+    ok "C27: pull -n ничего не записал"
+else
+    fail "C27: pull -n записал файл (не dry-run)"
+fi
+if (cd "$TEST_WS" && "$BIN" user pull -e smoke-env >/dev/null 2>&1); then
+    ok "C27: user pull прошёл"
+else
+    fail "C27: user pull упал"
+fi
+if grep -qF 'c27-agent-edit' "$TEST_PIBOX/template/user/.pi/agent/USER.md"; then
+    ok "C27: pull забрал правку из env в template/user"
+else
+    fail "C27: pull не забрал правку из env"
+fi
+
+# C27.3: pull с явным путём — новый для слоя файл промоутится
+printf 'new-file-body\n' >"$TEST_PIBOX/env/smoke-env/.pi/agent/prompts/c27-new.md"
+if (cd "$TEST_WS" && "$BIN" user pull -e smoke-env .pi/agent/prompts/c27-new.md >/dev/null 2>&1); then
+    ok "C27: user pull PATH прошёл"
+else
+    fail "C27: user pull PATH упал"
+fi
+if cmp -s "$TEST_PIBOX/env/smoke-env/.pi/agent/prompts/c27-new.md" \
+    "$TEST_PIBOX/template/user/.pi/agent/prompts/c27-new.md"; then
+    ok "C27: новый файл промоутирован в template/user"
+else
+    fail "C27: новый файл не промоутирован"
+fi
+
+# C27.4: opt-out PIBOX_NO_USER_LAYER=1
+printf '# c27-optout\n' >>"$TEST_PIBOX/template/user/.pi/agent/USER.md"
+if (cd "$TEST_WS" && env PIBOX_NO_USER_LAYER=1 "$BIN" --dry-run -e smoke-env >/dev/null 2>&1); then
+    ok "C27: запуск с PIBOX_NO_USER_LAYER=1 прошёл"
+else
+    fail "C27: запуск с PIBOX_NO_USER_LAYER=1 упал"
+fi
+if ! grep -qF 'c27-optout' "$TEST_PIBOX/env/smoke-env/.pi/agent/USER.md"; then
+    ok "C27: PIBOX_NO_USER_LAYER отключил слой"
+else
+    fail "C27: слой применился при PIBOX_NO_USER_LAYER=1"
+fi
+rm -f "$TEST_PIBOX/env/smoke-env/.pi/agent/prompts/c27-new.md" \
+    "$TEST_PIBOX/template/user/.pi/agent/prompts/c27-new.md"
 
 # C12: -p / -E
 DRY3=""
@@ -457,10 +532,11 @@ else
 fi
 expect_contains "C19: образ найден (D2)" "$DOCTOR_OUT" "образ pibox:latest найден"
 expect_contains "C19: окружение default на месте (D4)" "$DOCTOR_OUT" "окружение 'default':"
-expect_contains "C19: каркас env на месте (D5)" "$DOCTOR_OUT" ".pi/agent/models.json"
+expect_contains "C19: каркас env на месте (D5)" "$DOCTOR_OUT" ".pi/agent/AGENTS.md"
+expect_contains "C19: слой user применён (D5)" "$DOCTOR_OUT" "слой user"
 expect_contains "C19: расширения отсутствуют — INFO (D6)" "$DOCTOR_OUT" "расширения не установлены"
 
-# C19: --fix чинит сломанный каркас (D5)
+# C19: --fix чинит сломанный каркас (D5): слой user переиспользуется как источник
 rm "$TEST_PIBOX/env/default/.pi/agent/models.json"
 DOCTOR_FIX_RC=0
 DOCTOR_FIX_OUT="$(cd "$TEST_WS" && "$BIN" doctor -e default --fix 2>/dev/null)" || DOCTOR_FIX_RC=$?
@@ -565,7 +641,7 @@ fi
 
 group "C20: расширения (манифест + extensions install + doctor D9)"
 
-expect_contains "C20: манифест в установке" "$(cat "$TEST_PIBOX/env/extensions.txt")" "npm:pi-lens@4.2.1"
+expect_contains "C20: манифест в установке" "$(cat "$TEST_PIBOX/template/extensions.txt")" "npm:pi-lens@4.2.1"
 
 # регрессия: инлайн-комментарий с вторым '#' (напр. "[Image #N]") не должен
 # попадать в запись — раньше ${line%\#*} обрезал по ПОСЛЕДНЕМУ '#', и мусор
@@ -609,7 +685,7 @@ fi
 # D9: doctor сверяет дерево node_modules с манифестом (нужен jq на хосте)
 if command -v jq >/dev/null 2>&1; then
     DN9="$TEST_PIBOX/env/smoke-env/.pi/agent/npm/node_modules"
-    N9="$(grep -c '^npm:' "$TEST_PIBOX/env/extensions.txt")" # динамический счётчик — манифест растёт
+    N9="$(grep -c '^npm:' "$TEST_PIBOX/template/extensions.txt")" # динамический счётчик — манифест растёт
     # полная имитация установленного набора: все пакеты манифеста
     while IFS= read -r line; do
         line="${line%%\#*}"                     # хвостовой комментарий — до всех проверок
@@ -621,7 +697,7 @@ if command -v jq >/dev/null 2>&1; then
         name9="${name9%@*}"
         mkdir -p "$DN9/$name9"
         printf '{"name":"%s","version":"%s"}\n' "$name9" "$ver9" >"$DN9/$name9/package.json"
-    done <"$TEST_PIBOX/env/extensions.txt"
+    done <"$TEST_PIBOX/template/extensions.txt"
     # + пакет вне манифеста (ручная установка)
     mkdir -p "$DN9/someone-custom"
     printf '{"name":"someone-custom","version":"1.0.0"}\n' >"$DN9/someone-custom/package.json"

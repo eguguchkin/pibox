@@ -6,20 +6,23 @@
 #   bin/pibox       CLI — точка входа (подгружает lib/)
 #   lib/            модули CLI (копируются целиком, зеркало исходников)
 #   docker/         build-контекст (Dockerfile, entrypoint.sh, .dockerignore)
-#   env/.template/  шаблон для новых окружений (имя с точкой — glob '*' его не матчит,
-#                   поэтому 'env list' и 'env remove' шаблон не видят)
-#   env/            окружения (default создаётся из шаблона)
-#   env/extensions.txt  манифест расширений pi (используется 'pibox extensions install')
-#   models.json     конфиг моделей (копируется только если нет;
-#                   НИКОГДА не перезаписывается — там API-ключи пользователя)
+#   template/common/  СЛОЙ 1: продукт — начальное состояние окружений
+#                     (перезаписывается ВСЕГДА: установка = обновление)
+#   template/user/    СЛОЙ 2: личные инварианты владельца (models.json,
+#                     USER.md, личные расширения/скиллы/конфиги) —
+#                     копируется АДДИТИВНО: существующее не трогается
+#   template/extensions.txt  манифест расширений pi (используется
+#                     'pibox extensions install')
+#   env/            окружения (default создаётся из шаблонов)
 #
 # Идемпотентность:
-#   - bin/pibox + lib/, docker/ и env/.template/ перезаписываются ВСЕГДА:
-#     установка = обновление, build-контекст — точное зеркало исходников
+#   - bin/pibox + lib/, docker/, template/common/ и template/extensions.txt
+#     перезаписываются ВСЕГДА: установка = обновление, build-контекст —
+#     точное зеркало исходников
+#   - template/user/ копируется аддитивно (cp -rn): новые заглушки доезжают,
+#     правки владельца не перезаписываются НИКОГДА — там могут быть ключи
 #   - env/* не трогается; с --force ВСЕ окружения удаляются
-#     (default пересоздаётся из свежего шаблона)
-#   - env/extensions.txt копируется только если отсутствует (пользователь
-#     может редактировать свой набор расширений)
+#     (default пересоздаётся из свежих шаблонов)
 #
 # Опции:
 #   -d, --dir PATH     целевая директория (дефолт: ~/pibox или $PIBOX_DIR)
@@ -224,6 +227,8 @@ check_sources() {
         "lib/cmd-webui.sh"
         "lib/cmd-update.sh"
         "lib/env.sh"
+        "lib/layers.sh"
+        "lib/cmd-user.sh"
         "lib/ext-manifest.sh"
         "lib/ext-progress.sh"
         "lib/main.sh"
@@ -231,9 +236,10 @@ check_sources() {
         "entrypoint.sh"
         "webui.sh"
         ".dockerignore"
-        "models.json"
-        "env/.template/README.md"
-        "env/extensions.txt"
+        "template/README.md"
+        "template/extensions.txt"
+        "template/common/.pi/agent/AGENTS.md"
+        "template/user/.pi/agent/models.json"
     )
 
     for file in "${required_files[@]}"; do
@@ -248,14 +254,13 @@ check_sources() {
 install() {
     local target_bin="$PIBOX_DIR/bin"
     local target_docker="$PIBOX_DIR/docker"
-    local target_env_template="$PIBOX_DIR/env/.template"
+    local target_template="$PIBOX_DIR/template"
     local target_env="$PIBOX_DIR/env"
-    local target_models="$PIBOX_DIR/models.json"
 
     log "Установка pibox в: ${PIBOX_DIR}"
 
     # 1. Создание структуры директорий
-    mkdir -p "$target_bin" "$target_docker" "$target_env_template" "$target_env"
+    mkdir -p "$target_bin" "$target_docker" "$target_template" "$target_env"
 
     # 2. Копирование CLI (bin/pibox + lib/) — всегда: установка = обновление
     log "Копирую CLI: bin/pibox + lib/"
@@ -277,47 +282,41 @@ install() {
     done
 
     # 4. --force: удалить ВСЕ окружения (env/*). Без --force не трогаем.
-    #    ВАЖНО: строго ДО обновления env/.template — зачистка сносит весь env/,
-    #    включая шаблон; если делать наоборот, шаг 6 упадёт с «cp: cannot stat
-    #    .../env/.template/.» (env/default останется пустым, CLI-тесты красные).
     if ((FORCE == 1)); then
         warn "--force: удаляю ВСЕ окружения в ${target_env} (включая default)"
         safe_rm_rf "$target_env"
     fi
     mkdir -p "$target_env"
 
-    # 5. Шаблон окружения — всегда свежий из исходников
-    log "Обновляю env/.template/"
-    safe_rm_rf "$target_env_template"
-    mkdir -p "$target_env_template"
-    cp -a "$SRC_DIR/env/.template/." "$target_env_template/"
+    # 5. СЛОЙ 1 (template/common) — всегда свежий из исходников.
+    #    Применяется к окружению один раз, при создании (create_env).
+    log "Обновляю template/common/ (слой 1: начальное состояние)"
+    safe_rm_rf "$target_template/common"
+    mkdir -p "$target_template/common"
+    cp -a "$SRC_DIR/template/common/." "$target_template/common/"
 
-    # 6. Создание default окружения (если не существует)
+    # 6. СЛОЙ 2 (template/user) — АДДИТИВНО (cp -Rn): новые заглушки доезжают,
+    #    существующие файлы владельца (в т.ч. ключи) не перезаписываются.
+    #    Применяется к окружению при каждом запуске (apply_user_layer).
+    if [[ -d "$SRC_DIR/template/user" ]]; then
+        log "Копирую template/user/ аддитивно (слой 2: личные инварианты)"
+        mkdir -p "$target_template/user"
+        cp -Rn "$SRC_DIR/template/user/." "$target_template/user/"
+    fi
+
+    # 7. Манифест расширений и README — всегда из исходников
+    cp "$SRC_DIR/template/extensions.txt" "$target_template/extensions.txt"
+    cp "$SRC_DIR/template/README.md" "$target_template/README.md"
+
+    # 8. Создание default окружения (если не существует)
     if [[ ! -d "$target_env/default" ]]; then
-        log "Создаю окружение default из шаблона"
+        log "Создаю окружение default из шаблонов"
         mkdir -p "$target_env/default"
-        cp -a "$target_env_template/." "$target_env/default/"
+        cp -a "$target_template/common/." "$target_env/default/"
+        # заглушки слоя 2 — как при обычном запуске (аддитивно)
+        cp -Rn "$target_template/user/." "$target_env/default/" 2>/dev/null || true
     else
         log "Окружение default уже существует — пропускаю создание"
-    fi
-
-    # 7. Манифест расширений — в env/ (копируется ТОЛЬКО если отсутствует:
-    #    пользователь вправе редактировать свой набор; sed '-i' не нужен —
-    #    файл маленький и одноразовый)
-    if [[ ! -f "$target_env/extensions.txt" ]]; then
-        log "Копирую манифест расширений: extensions.txt → env/"
-        cp "$SRC_DIR/env/extensions.txt" "$target_env/extensions.txt"
-    else
-        log "Манифест env/extensions.txt уже существует — не трогаю"
-    fi
-
-    # 8. models.json — не перезаписывается НИКОГДА (API-ключи пользователя):
-    #    копируется только если отсутствует
-    if [[ ! -f "$target_models" ]] && [[ -f "$SRC_DIR/models.json" ]]; then
-        log "Копирую models.json → models.json"
-        cp "$SRC_DIR/models.json" "$target_models"
-
-        warn "Не забудьте отредактировать ${target_models} и указать ваши API-ключи."
     fi
 
     # 9. Добавление в PATH
@@ -327,10 +326,9 @@ install() {
 
     log "Установка завершена успешно!"
     log "Следующие шаги:"
-    log "  1. Отредактируйте ${target_models} (укажите API-ключи)"
+    log "  1. Укажите API-ключи: ${target_template}/user/.pi/agent/models.json"
     log "  2. Соберите образ: pibox build"
     log "  3. Установите набор расширений: pibox extensions install   (несколько минут)"
-    log "     (опционально: поправьте свой набор в ${target_env}/extensions.txt)"
     log "  4. Запустите агента: cd ~/your-project && pibox"
 }
 

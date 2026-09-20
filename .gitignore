@@ -20,3 +20,5 @@ Thumbs.db
 .vscode/
 *.swp
 *.swo
+# Рантайм: созданные окружения живут в $PIBOX_DIR/env/ (не в репозитории)
+env/

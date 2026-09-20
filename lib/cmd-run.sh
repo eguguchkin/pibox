@@ -110,9 +110,8 @@ launch_container() {
     validate_env_name "$ENV_NAME"
     check_workspace_isolation
 
-    # Автосоздание окружения
+    # Автосоздание окружения + слои (common при создании, user — всегда)
     create_env "$ENV_NAME"
-    copy_models_json "$ENV_NAME"
 
     # Проверка образа (не собираем в dry-run)
     if [[ "$DRY_RUN" != "1" ]]; then
@@ -196,6 +195,16 @@ launch_container() {
         warn "  логи:    docker logs $CONTAINER_NAME"
         warn "  shell:   docker exec -it $CONTAINER_NAME bash"
         warn "  удалить: docker rm -f $CONTAINER_NAME"
+    fi
+
+    # Хинт о дрейфе слоёв: если агент что-то поменял в файлах слоя 2 —
+    # подсказать, как забрать это в template/user (обратная синхронизация).
+    layers_drift "$ENV_NAME"
+    if [[ ${#LAYER_DRIFT_PATHS[@]} -gt 0 ]]; then
+        local drift_list="${LAYER_DRIFT_PATHS[*]}"
+        [[ ${#LAYER_DRIFT_PATHS[@]} -gt 3 ]] && drift_list="${LAYER_DRIFT_PATHS[0]}, ${LAYER_DRIFT_PATHS[1]}, … (всего ${#LAYER_DRIFT_PATHS[@]})"
+        log "Изменено в env относительно template/user: $drift_list"
+        log "Сохранить в свой слой: pibox user pull -e $ENV_NAME"
     fi
 
     return $rc

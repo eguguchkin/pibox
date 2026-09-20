@@ -1,0 +1,20 @@
+{
+  "defaultModel": "grok",
+  "outputDir": "/home/pi/.pi/images",
+  "customProviders": {
+    "selectel": {
+      "name": "Selectel AIG",
+      "api": "openai",
+      "baseUrl": "https://api.selectel.ru/aig/v1",
+      "apiKey": "$SELECTEL_API_KEY",
+      "models": [
+        { "id": "x-ai/grok-imagine-image-2.0", "alias": "grok" },
+        { "id": "krea/krea-2-medium-turbo", "alias": "krea-turbo" },
+        { "id": "krea/krea-2-medium", "alias": "krea" },
+        { "id": "qwen/qwen-image-3", "alias": "qwen" },
+        { "id": "qwen/qwen-image-3-pro", "alias": "qwen-pro" },
+        { "id": "openai/gpt-image-2.5-flare", "alias": "flare" }
+      ]
+    }
+  }
+}

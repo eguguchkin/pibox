@@ -11,7 +11,8 @@
 #   shell          отладочная оболочка в контейнере
 #   update         обновление установки
 #   doctor         диагностика окружения (аудит + --fix)
-#   extensions     установка расширений из манифеста env/extensions.txt
+#   extensions     установка расширений из манифеста template/extensions.txt
+#   user           слои шаблона: push (user→env) / pull (env→user)
 #
 # Опции запуска:
 #   -e, --env NAME         окружение (по умолчанию default)
@@ -85,7 +86,11 @@ pibox — запуск Pi Coding Agent в изолированном Docker-ко
     update                     обновление установки
     doctor [-e NAME] [--fix]   диагностика окружения (аудит + --fix)
     extensions install         установка расширений из манифеста
-                               env/extensions.txt (см. ниже)
+                               template/extensions.txt (см. ниже)
+    user push|pull [-e NAME]   слой template/user: push — применить к
+                               окружению (как при старте); pull [-n] —
+                               сохранить правки агента из окружения
+                               в template/user (переживут пересоздание env)
 
 Опции extensions:
     pibox extensions install [-e NAME]
@@ -123,6 +128,7 @@ pibox — запуск Pi Coding Agent в изолированном Docker-ко
     pibox shell -e php8        # оболочка в окружении php8
     pibox --keep               # оставить контейнер после выхода
     pibox extensions install   # эталонный набор расширений в default
+    pibox user pull            # забрать правки агента в template/user
 
 EOF
 }

@@ -183,7 +183,7 @@ RUN userdel -r ubuntu 2>/dev/null || true; \
 
 
     
-# — fallback-дотфайлы (КОНТРАКТ с задачей 4: канонические — в env/.template) —
+# — fallback-дотфайлы (КОНТРАКТ с задачей 4: канонические — в template/common) —
 # СЛОЁНАЯ СХЕМА — skel здесь единственный источник правды:
 #   .bashrc        — заглушка с маркером PIBOX_SKELETON_V1 (правки — в ~/.bashrc.user)
 #   .bashrc.pibox  — сток: базовый Ubuntu bashrc + добавки pibox (mise, prompt)

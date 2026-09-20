@@ -1,7 +1,7 @@
 # shellcheck shell=bash disable=SC2034  # переменные общие между модулями (после source)
 # --- Манифест расширений ---------------------------------------------------------
 
-EXTENSIONS_FILE="env/extensions.txt"
+EXTENSIONS_FILE="template/extensions.txt"
 
 # Читает манифест расширений (строки вида npm:имя@версия).
 # Заполняет глобальный массив EXT_ENTRIES; при отсутствии файла — пустой.

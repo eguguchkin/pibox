@@ -34,6 +34,9 @@ main() {
     doctor)
         cmd_doctor "$@"
         ;;
+    user)
+        cmd_user "$@"
+        ;;
     extensions)
         cmd_extensions "$@"
         ;;
