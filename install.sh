@@ -249,10 +249,10 @@ check_sources() {
         "lib/ext-manifest.sh"
         "lib/ext-progress.sh"
         "lib/main.sh"
-        "Dockerfile"
-        "entrypoint.sh"
-        "webui.sh"
-        ".dockerignore"
+        "docker/Dockerfile"
+        "docker/entrypoint.sh"
+        "docker/webui.sh"
+        "docker/.dockerignore"
         "template/README.md"
         "template/extensions.txt"
         "template/common/.pi/agent/AGENTS.md"
@@ -295,7 +295,7 @@ install() {
     mkdir -p "$target_docker"
     for file in Dockerfile entrypoint.sh webui.sh .dockerignore; do
         log "Копирую: $file → docker/"
-        cp "$SRC_DIR/$file" "$target_docker/"
+        cp "$SRC_DIR/docker/$file" "$target_docker/"
     done
 
     # 4. --force: удалить ВСЕ окружения (env/*). Без --force не трогаем.

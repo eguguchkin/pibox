@@ -310,9 +310,11 @@ php -v; go version           # переживают перезапуск кон�
 
 ```
 pibox/
-├── Dockerfile          # multi-stage: ubuntu 24.04 + node 24 + pi + pi-web-ui + mise
-├── entrypoint.sh       # UID/GID, dotfiles-слои, gosu→tini→CMD (pi | webui)
-├── webui.sh            # лаунчер web-ui в контейнере (→ /usr/local/bin/webui)
+├── docker/             # build-контекст (копируется install.sh в $PIBOX_DIR/docker)
+│   ├── Dockerfile      # multi-stage: ubuntu 24.04 + node 24 + pi + pi-web-ui + mise
+│   ├── entrypoint.sh   # UID/GID, dotfiles-слои, gosu→tini→CMD (pi | webui)
+│   ├── webui.sh        # лаунчер web-ui в контейнере (→ /usr/local/bin/webui)
+│   └── .dockerignore   # контекст = только файлы сборки
 ├── bin/
 │   └── pibox           # точка входа CLI: source lib/* → main
 ├── lib/                # модули CLI (source'ятся в фиксированном порядке)
@@ -355,8 +357,8 @@ pibox/
 ./tests/smoke.sh --rebuild    # пересобрать образ
 PIBOX_IMAGE=pibox:test ./tests/smoke.sh
 
-shellcheck install.sh entrypoint.sh bin/pibox lib/*.sh tests/smoke.sh tests/helpers.sh   # как в CI
-shfmt -d -i 4 install.sh entrypoint.sh bin/pibox lib/*.sh tests/smoke.sh tests/helpers.sh  # стиль: 4 пробела, не табы
+shellcheck install.sh docker/entrypoint.sh docker/webui.sh bin/pibox lib/*.sh tests/smoke.sh tests/helpers.sh   # как в CI
+shfmt -d -i 4 install.sh docker/entrypoint.sh docker/webui.sh bin/pibox lib/*.sh tests/smoke.sh tests/helpers.sh  # стиль: 4 пробела, не табы
 ```
 
 ### Обновление версий

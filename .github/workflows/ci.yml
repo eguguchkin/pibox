@@ -17,14 +17,14 @@ jobs:
 
       - name: shellcheck
         run: |
-          shellcheck install.sh entrypoint.sh webui.sh \
+          shellcheck install.sh docker/entrypoint.sh docker/webui.sh \
             bin/pibox lib/*.sh \
             tests/smoke.sh tests/helpers.sh
 
       - name: "shfmt (стиль: 4 пробела)"
         run: |
           go install mvdan.cc/shfmt/v3/cmd/shfmt@latest
-          "$(go env GOPATH)/bin/shfmt" -d -i 4 install.sh entrypoint.sh webui.sh \
+          "$(go env GOPATH)/bin/shfmt" -d -i 4 install.sh docker/entrypoint.sh docker/webui.sh \
             bin/pibox lib/*.sh tests/smoke.sh tests/helpers.sh
 
       - name: Исполняемые биты скриптов в git
@@ -45,4 +45,4 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Собрать образ
-        run: docker build -t pibox:ci .
+        run: docker build -t pibox:ci docker/

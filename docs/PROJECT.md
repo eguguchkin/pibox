@@ -28,9 +28,7 @@ PIBOX — обвязка вокруг [Pi Coding Agent](https://pi.dev/) (npm: `
 
 | Файл | Назначение |
 | --- | --- |
-| `Dockerfile` | multi-stage: ubuntu 24.04 + node 24 + pi + pi-web-ui + mise; ARG-версии пинуются; pi и pi-web-ui ставятся одной npm-командой (общий SDK дедупится в один экземпляр), g++ для node-pty в builder и в runtime для нативных сборок расширений, стрипы платформенного жира |
-| `entrypoint.sh` | от root: подстановка UID/GID хост-юзера → dotfiles-слои (заглушка + `.pibox`/`.user`) → gosu → tini → CMD (по умолчанию `pi`; из `pibox webui` — лаунчер `webui`) |
-| `webui.sh` | лаунчер web-ui в контейнере: чистка control-сокета, зелёная строка-ссылка `http://localhost:<hp>` (+ `?token=` из URL-safe `PI_WEB_TOKEN`), `exec pi-web-ui --no-browser --host 0.0.0.0` — дальше штатные логи сервера/агента в консоль; ставится в `/usr/local/bin/webui` |
+| `docker/` | build-контекст: `Dockerfile` — multi-stage: ubuntu 24.04 + node 24 + pi + pi-web-ui + mise; ARG-версии пинуются; pi и pi-web-ui ставятся одной npm-командой (общий SDK дедупится в один экземпляр), g++ для node-pty в builder и в runtime для нативных сборок расширений, стрипы платформенного жира; `entrypoint.sh` — от root: подстановка UID/GID хост-юзера → dotfiles-слои (заглушка + `.pibox`/`.user`) → gosu → tini → CMD (по умолчанию `pi`; из `pibox webui` — лаунчер `webui`); `webui.sh` — лаунчер web-ui в контейнере: чистка control-сокета, зелёная строка-ссылка `http://localhost:<hp>` (+ `?token=` из URL-safe `PI_WEB_TOKEN`), `exec pi-web-ui --no-browser --host 0.0.0.0` — дальше штатные логи сервера/агента в консоль; ставится в `/usr/local/bin/webui`; `.dockerignore` — контекст = только файлы сборки |
 | `bin/pibox` + `lib/` | исходник CLI `pibox` (после install — `~/pibox/bin/pibox` + `~/pibox/lib/`); точка входа подгружает модули в фиксированном порядке: `common.sh` (константы, хелперы, usage, проверки) → `env.sh` (окружения) → `docker-cmd.sh` (сборка docker run + webui-режим) → `ext-manifest.sh` (манифест расширений) → `cmd-*.sh` (подкоманды; `cmd-run.sh` содержит общее ядро `launch_container`, `cmd-webui.sh` его переиспользует) → `main.sh` (диспетчер). Зависимости только «вниз», циклов нет |
 | `install.sh` | установщик: создаёт `~/pibox`, bin в PATH, блок `>>> pibox installer >>>` в rc-файле |
 | `template/common/` | СЛОЙ 1: начальное состояние окружений — стартовые знания агента (`.pi/agent/AGENTS.md`, скиллы `install-languages`, `workspace-hygiene`, `networking`, `extension-hygiene`, `show-image`, расширение `terminal-probe`) |
@@ -57,8 +55,8 @@ PIBOX — обвязка вокруг [Pi Coding Agent](https://pi.dev/) (npm: `
 pibox build                    # или docker build
 ./tests/smoke.sh               # полный прогон ~2 мин; --offline / --keep / --rebuild
 ./tests/smoke.sh --no-docker   # внутри контейнера pibox: CLI-фазы через tests/docker-stub, docker-фазы SKIP
-shellcheck install.sh entrypoint.sh webui.sh bin/pibox lib/*.sh tests/*.sh tests/docker-stub/docker   # так же в CI
-shfmt -d -i 4 install.sh entrypoint.sh webui.sh bin/pibox lib/*.sh tests/*.sh tests/docker-stub/docker  # стиль: 4 пробела, не табы
+shellcheck install.sh docker/entrypoint.sh docker/webui.sh bin/pibox lib/*.sh tests/*.sh tests/docker-stub/docker   # так же в CI
+shfmt -d -i 4 install.sh docker/entrypoint.sh docker/webui.sh bin/pibox lib/*.sh tests/*.sh tests/docker-stub/docker  # стиль: 4 пробела, не табы
 ```
 
 CI (`.github/workflows/ci.yml`): shellcheck + проверка exec-битов + docker build.
