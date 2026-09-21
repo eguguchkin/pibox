@@ -103,7 +103,13 @@ cmd_run() {
 launch_container() {
     # Дефолты
     ENV_NAME="${ENV_NAME:-$DEFAULT_ENV}"
-    CONTAINER_NAME="${CONTAINER_NAME:-pibox-${ENV_NAME}}"
+    if [[ -z "$CONTAINER_NAME" ]]; then
+        CONTAINER_NAME="pibox-${ENV_NAME}"
+        # webui — в отдельном контейнере: иначе `pibox webui` при запущенном
+        # TUI-экземпляре делает docker rm -f и убивает его (exit 137). pi
+        # рассчитан на параллельные сессии (общий ~/.pi/agent/sessions).
+        [[ "${WEBUI_MODE:-0}" == "1" ]] && CONTAINER_NAME+="-webui"
+    fi
 
     # Проверки
     check_docker
@@ -150,28 +156,11 @@ launch_container() {
         log "Запуск pi в окружении '$ENV_NAME' (контейнер: $CONTAINER_NAME)..."
     fi
 
-    # Автооткрытие браузера (webui): фоновый «ждун» стартует здесь — ПОСЛЕ
-    # удаления старого контейнера, чтобы проба порта не поймала его ещё
-    # живой сокет. Убивается сразу после выхода docker run.
-    local WEBUI_OPEN_PID=""
-    if [[ "${WEBUI_MODE:-0}" == "1" && "${AUTO_OPEN:-1}" == "1" && -t 1 ]]; then
-        webui_wait_and_open "${WEBUI_OPEN_URL}" "${WEBUI_HOST_PORT}" &
-        WEBUI_OPEN_PID=$!
-    fi
-
     # Запуск. Ловим код возврата вручную, чтобы set -e не убил скрипт
     # до обработки cleanup-логики.
     local rc=0
     "${RUN_CMD[@]}" || rc=$?
-
-    # Ждун больше не нужен: браузер открыл (или контейнер умер до готовности —
-    # не должен выдать ложный warning). Уже вышедшего — kill молча проглотит.
-    if [[ -n "$WEBUI_OPEN_PID" ]]; then
-        kill "$WEBUI_OPEN_PID" 2>/dev/null || true
-    fi
-
     # Постобработка: при успехе и без --keep удаляем контейнер.
-    # Во всех остальных случаях оставляем и подсказываем, как посмотреть.
     # В webui-режиме Ctrl+C (SIGINT→130 / SIGTERM→143) — ШТАТНАЯ остановка
     # сервера, а не сбой: чистим тихо, без «оставлен для отладки».
     local interrupted=0
@@ -207,5 +196,5 @@ launch_container() {
         log "Сохранить в свой слой: pibox user pull -e $ENV_NAME"
     fi
 
-    return $rc
+    return "${rc:-0}"
 }

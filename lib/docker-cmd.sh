@@ -11,10 +11,6 @@ RUN_CMD=()
 WEBUI_MODE=0
 WEBUI_PORT=8787
 WEBUI_HOST_PORT=""
-# URL и флаг автооткрытия браузера (заполняет cmd-webui.sh до launch_container;
-# дефолты здесь — чтобы файл проходил shellcheck автономно).
-WEBUI_OPEN_URL=""
-AUTO_OPEN=1
 
 # Заполняет RUN_CMD аргументами для docker run.
 # Использует переменные окружения: ENV_NAME, CONTAINER_NAME, MEMORY, CPUS,
@@ -115,13 +111,9 @@ print_run_cmd() {
         printf ' %q' "$a"
     done
     printf '\n'
-    # webui: показать и то, что произойдёт после запуска (автооткрытие браузера)
+    # webui: показать ссылку, которую лаунчер напечатает в контейнере
     if [[ "${WEBUI_MODE:-0}" == "1" ]]; then
-        if [[ "${AUTO_OPEN:-1}" == "1" ]]; then
-            printf 'DRY RUN: браузер откроется автоматически: %s (--no-open отключает)\n' \
-                "${WEBUI_OPEN_URL:-http://localhost:${WEBUI_HOST_PORT:-8787}}"
-        else
-            printf 'DRY RUN: автооткрытие браузера выключено (--no-open)\n'
-        fi
+        printf 'DRY RUN: лаунчер напечатает ссылку: http://localhost:%s\n' \
+            "${WEBUI_HOST_PORT:-$WEBUI_PORT}"
     fi
 }

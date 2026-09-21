@@ -158,8 +158,8 @@ ENV LANG=en_US.UTF-8 \
 # — node + npm + pi + pi-web-ui (с собранным node-pty) из builder (одним COPY) —
 COPY --from=builder /usr/local/ /usr/local/
 
-# — лаунчер web-ui: команда контейнера для `pibox webui` (зелёная ссылка +
-#   exec pi-web-ui); контракт — в webui.sh —
+# — лаунчер web-ui: команда контейнера для `pibox webui` (печатает зелёную
+#   строку со ссылкой, затем exec pi-web-ui); полный контракт — в webui.sh
 COPY --chmod=755 webui.sh /usr/local/bin/webui
 
 # --- mise: глобальный бинарник ---

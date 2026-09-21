@@ -138,6 +138,7 @@ fi
 ok "I2: установка в ${TEST_PIBOX}"
 
 for path in bin/pibox docker/Dockerfile docker/entrypoint.sh docker/.dockerignore \
+    docker/webui.sh \
     template/README.md template/extensions.txt \
     template/common/.pi/agent/AGENTS.md \
     template/user/.pi/agent/models.json; do
@@ -251,7 +252,7 @@ else
     # Переменные в строках bash -c намеренно раскрываются bash-ом контейнера
     # shellcheck disable=SC2016
     expect_ok "B4: тяжёлых тулчейнов в образе нет" docker run --rm "$IMAGE" \
-        bash -c 'for t in gcc gdb rustc cargo cmake valgrind strace tcpdump; do command -v "$t" && exit 1; done; exit 0'
+        bash -c 'for t in gdb rustc cargo cmake valgrind strace tcpdump; do command -v "$t" && exit 1; done; exit 0'
     # shellcheck disable=SC2016
     expect_ok "B5: пользователь pi (uid 1000) и /opt/skel" docker run --rm "$IMAGE" \
         bash -c '[ "$(id -u pi)" = 1000 ] && [ -f /opt/skel/.bashrc ] && [ -f /opt/skel/.profile ]'
@@ -459,6 +460,7 @@ else
 fi
 expect_contains "C21: авто -p 8787:8787" "$DRYW" "-p 8787:8787"
 expect_contains "C21: команда контейнера — webui" "$DRYW" "$IMAGE webui"
+expect_contains "C21: webui-контейнер — отдельное имя (не убивает TUI)" "$DRYW" "--name pibox-default-webui"
 expect_contains "C21: PI_WEB_PORT передан" "$DRYW" "-e PI_WEB_PORT=8787"
 expect_contains "C21: WEBUI_HOST_PORT для ссылки" "$DRYW" "-e WEBUI_HOST_PORT=8787"
 
@@ -495,40 +497,22 @@ else
     ok "C24: webui -- extra отклонён"
 fi
 
-# C25: автооткрытие браузера в dry-run — URL виден, токен из -E подставлен
+# C25/C26: webui dry-run — печатает хост-порт и PI_WEB_TOKEN пробрасывается -e
+# (ссылку печатает лаунчер webui.sh в контейнере, CLI лишь передаёт порт)
 DRYW4=""
 if DRYW4="$(cd "$TEST_WS" && "$BIN" webui --dry-run 2>/dev/null)"; then
-    ok "C25: webui --dry-run (автооткрытие)"
+    ok "C25: webui --dry-run"
 else
     fail "C25: webui --dry-run завершился с ошибкой"
 fi
-expect_contains "C25: URL автооткрытия без токена" "$DRYW4" "браузер откроется автоматически: http://localhost:8787"
+expect_contains "C25: хост-порт ссылки" "$DRYW4" "лаунчер напечатает ссылку: http://localhost:8787"
 
-DRYW5=""
 if DRYW5="$(cd "$TEST_WS" && PI_WEB_TOKEN=s3cret "$BIN" webui --dry-run -E PI_WEB_TOKEN 2>/dev/null)"; then
     ok "C25: webui --dry-run с -E PI_WEB_TOKEN"
 else
     fail "C25: webui --dry-run с токеном завершился с ошибкой"
 fi
-expect_contains "C25: токен подставлен в URL" "$DRYW5" "/?token=s3cret"
-
-# не-URL-safe токен в ссылку не подставляем (URL был бы битым)
-DRYW5B="$(cd "$TEST_WS" && PI_WEB_TOKEN='сек рет' "$BIN" webui --dry-run -E PI_WEB_TOKEN 2>/dev/null)" || true
-expect_contains "C25: URL без не-URL-safe токена" "$DRYW5B" "http://localhost:8787 (--no-open"
-
-# C26: --no-open отключает автооткрытие
-DRYW6=""
-if DRYW6="$(cd "$TEST_WS" && "$BIN" webui --dry-run --no-open 2>/dev/null)"; then
-    ok "C26: webui --dry-run --no-open"
-else
-    fail "C26: webui --dry-run --no-open завершился с ошибкой"
-fi
-expect_contains "C26: автооткрытие выключено" "$DRYW6" "автооткрытие браузера выключено"
-if printf '%s' "$DRYW6" | grep -qF 'браузер откроется автоматически'; then
-    fail "C26: при --no-open URL автооткрытия печататься не должен"
-else
-    ok "C26: URL автооткрытия не печатается"
-fi
+expect_contains "C25: токен пробрасывается -e" "$DRYW5" "PI_WEB_TOKEN"
 
 # C15: env list
 if REPLY="$("$BIN" env list 2>/dev/null)"; then

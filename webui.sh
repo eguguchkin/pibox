@@ -3,8 +3,9 @@
 # PIBOX webui — лаунчер pi-web-ui внутри контейнера.
 #
 # Запускается как команда контейнера из `pibox webui` (CMD-override: webui):
-# печатает зелёную ссылку и exec'ит сервер в foreground — в консоль хоста
-# идут логи сервера и агента; Ctrl+C останавливает контейнер.
+# печатает зелёную строку со ссылкой на интерфейс и exec'ит сервер в
+# foreground — дальше в консоль идут штатные логи pi-web-ui и агента,
+# Ctrl+C останавливает контейнер.
 #
 # Контракт с lib/cmd-webui.sh (CLI pibox):
 #   WEBUI_HOST_PORT — хост-порт для ссылки (pibox пробрасывает через -e).
@@ -15,7 +16,6 @@
 set -euo pipefail
 
 readonly PORT="${PI_WEB_PORT:-8787}"
-readonly HOST_PORT="${WEBUI_HOST_PORT:-$PORT}"
 
 # Контрольный сокет pi-web-ui лежит в персистентном ~/.pi-web (bind-mount
 # хоста), поэтому сокет от убитого (kill -9 / docker kill) запуска переживает
@@ -39,9 +39,15 @@ if [ -e "$CONTROL_SOCK" ]; then
     fi
 fi
 
-# \r\n: docker run -t переводит хостовый TTY в raw-режим (ONLCR отключён),
-# «голый» \n даёт съехавшие отступы — как в entrypoint.sh. В captured-режиме
-# (без TTY) лишний \r безвреден.
-printf '\033[32m\r\n  ➜  web-ui: http://localhost:%s\r\n\033[0m' "$HOST_PORT"
+# Зелёная строка со ссылкой. \r\n: docker run -t переводит хостовый TTY в
+# raw-режим (ONLCR отключён) — «голый» \n даёт съехавшие отступы, как в
+# entrypoint.sh. Токен из PI_WEB_TOKEN подставляем в query (только URL-safe —
+# иначе страницу авторизовать вручную).
+readonly URL="http://localhost:${WEBUI_HOST_PORT:-$PORT}"
+if [ -n "${PI_WEB_TOKEN:-}" ] && printf '%s' "$PI_WEB_TOKEN" | grep -qE '^[A-Za-z0-9._~+-]+$'; then
+    printf '\033[32m  ➜  web-ui: %s/?token=%s\033[0m\r\n' "$URL" "$PI_WEB_TOKEN"
+else
+    printf '\033[32m  ➜  web-ui: %s\033[0m\r\n' "$URL"
+fi
 
 exec pi-web-ui --no-browser --host 0.0.0.0 --port "$PORT"
