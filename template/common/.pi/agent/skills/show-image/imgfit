@@ -1,35 +1,76 @@
 #!/usr/bin/env bash
 # imgfit <файл> [макс-ширина=800] — показать картинку в чате pi-web-ui.
-# Превью кладёт в /tmp/imgfit (вне workspace), печатает готовые markdown-строки.
+# Печатает готовые markdown-строки для вставки в ответ ДОСЛОВНО:
+# путь в ссылке уже финальный (превью из /tmp/imgfit или сам оригинал,
+# если он уже не шире лимита) — ничего не дописывать и не «исправлять».
 # Зависимости: python3 (в образе) + Pillow (venv, создаётся сам при первом запуске, нужна сеть ~15с).
 set -euo pipefail
-f=$1; w=${2:-800}
 VENV="$HOME/.pi/agent/venv-img"
+
+usage() {
+    echo "использование: imgfit <файл> [макс-ширина=800]" >&2
+    exit 2
+}
+if [ $# -lt 1 ] || [ $# -gt 2 ]; then usage; fi
+[ -f "$1" ] || { echo "imgfit: файл не найден: $1" >&2; exit 1; }
+case "${2:-}" in
+    "" ) : ;;
+    *[!0-9]*) echo "imgfit: ширина должна быть числом: $2" >&2; exit 1 ;;
+esac
+
 if [ ! -x "$VENV/bin/python" ]; then
     echo "imgfit: создаю venv с Pillow (однократно, ~15с)..." >&2
     python3 -m venv "$VENV"
     "$VENV/bin/pip" install -q --disable-pip-version-check pillow
 fi
-exec "$VENV/bin/python" - "$f" "$w" <<'EOF'
-import sys, os
+exec "$VENV/bin/python" - "$@" <<'EOF'
+import sys, os, json
 from urllib.parse import quote
+from urllib.request import urlopen, Request
 from PIL import Image
-src, mw = sys.argv[1], int(sys.argv[2])
-im = Image.open(src)
+
+src, mw = sys.argv[1], int(sys.argv[2]) if len(sys.argv) > 2 else 800
+im = Image.open(src)  # бросит исключение с внятной ошибкой, если это не картинка
 ow, oh = im.size
 osize = os.path.getsize(src)
 outdir = '/tmp/imgfit'
 os.makedirs(outdir, exist_ok=True)
 name = os.path.splitext(os.path.basename(src))[0]
+
 if im.width <= mw:
+    # Оригинал уже не шире лимита: ссылка на сам оригинал.
+    # Путь в markdown — из этой ветки, менять его руками нельзя (источник
+    # прошлого сбоя: агент «по памяти» дописал -w900 к несуществующему файлу).
     out, pw, ph = src, ow, oh
+    note = 'превью: оригинал (уже ≤ лимита)'
 else:
     ph = max(1, round(oh * mw / im.width))
-    im.resize((mw, ph), Image.LANCZOS).convert('RGB') \
-      .save(os.path.join(outdir, f'{name}-w{mw}.jpg'), quality=88)
-    out, pw, ph = os.path.join(outdir, f'{name}-w{mw}.jpg'), mw, ph
+    out = os.path.join(outdir, f'{name}-w{mw}.jpg')
+    im.resize((mw, ph), Image.LANCZOS).convert('RGB').save(out, quality=88)
+    pw, ph = mw, ph
+    note = f'превью {pw}×{ph}'
+
 hsize = os.path.getsize(out)
 hum = lambda n: f'{n/1048576:.1f} МБ' if n >= 1048576 else f'{n/1024:.0f} КБ'
-print(f'![{name}](/api/file?path={quote(out)})')
-print(f'*оригинал: `{src}` · {ow}×{oh} · {hum(osize)} · превью {pw}×{ph}, {hum(hsize)}*')
+url = f'/api/file?path={quote(out)}'
+
+# Самопроверка: webui-сервер должен отдать этот URL как image/*.
+# Ловит «сервер не запущен» и опечатки в пути ДО того, как юзер увидит битую иконку.
+warn = ''
+try:
+    port = os.environ.get('PI_WEB_PORT', '8787')
+    with urlopen(Request(f'http://127.0.0.1:{port}{url}'), timeout=3) as r:
+        ctype = r.headers.get('Content-Type', '')
+        if not ctype.startswith('image/'):
+            warn = f'  ⚠ сервер отдал {ctype or "пустой Content-Type"} вместо image/* — ссылка будет битой'
+        elif r.status != 200:
+            warn = f'  ⚠ сервер ответил {r.status} — ссылка будет битой'
+except Exception as e:
+    warn = f'  ⚠ не удалось проверить ссылку через webui ({e}) — вероятно, pibox webui не запущен'
+
+print('# IMGFIT: вставь в ответ ОБЕ строки ниже дословно; путь в ссылке уже финальный.')
+print(f'![{name}]({url})')
+print(f'*оригинал: `{src}` · {ow}×{oh} · {hum(osize)} · {note}, {hum(hsize)}*')
+if warn:
+    print(warn, file=sys.stderr)
 EOF
