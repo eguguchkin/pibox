@@ -51,7 +51,7 @@ cmd_extensions() {
     # установки из манифеста (кураторский запиненный набор); ручной `pi install`
     # внутри окружения остаётся под дефолтным гейтом npm (pending-варнинги,
     # npm install-scripts approve — по необходимости).
-    local ext_install_env=("npm_config_dangerously_allow_all_scripts=true")
+    local ext_install_env=("-e" "npm_config_dangerously_allow_all_scripts=true")
 
     local nm="$env_dir/.pi/agent/npm/node_modules"
     local total=${#EXT_ENTRIES[@]}
@@ -222,7 +222,12 @@ cmd_extensions() {
             printf '\033[90m── последние строки журнала ──\033[0m\n' >&2
             tail -n 20 "$fulllog" | _ext_strip_ansi >&2
         fi
-        rm -rf "$tmpdir"
+        if [[ $failed -eq 0 ]]; then
+            rm -rf "$tmpdir"
+        else
+            # лог нужен для разбора ошибок — не удаляем, путь уже выведен в ✗-строках
+            log "полный журнал установки: $fulllog"
+        fi
     fi
 
     # settings.json: добавляем только отсутствующие записи (порядок сохраняем).
