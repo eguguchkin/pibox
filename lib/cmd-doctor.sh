@@ -1,4 +1,17 @@
 # shellcheck shell=bash disable=SC2034  # переменные общие между модулями (после source)
+
+# Диагностика окружения: docker, образ, каркас env, дубли расширений, кэш,
+# сверка расширений с манифестом.
+#
+# Всё делается на хосте: env-каталог — это bind-mount, его файлы видны напрямую,
+# а arch хоста = arch контейнера, libc контейнера всегда glibc (Ubuntu-образ).
+# Поэтому правило «что мёртвое» выводится статически:
+#   рабочий вариант  — linux-<arch хоста>-gnu
+#   мусор            — *-musl, *-darwin*, *-win32*, linux-<чужая arch>-*
+# Мусорный платформенный пакет удаляется (--fix) только при живом gnu-твине;
+# без твина пакет сообщается как подозрительный и не трогается.
+#
+# Коды выхода: 0 — ошибок нет (предупреждения допустимы), 1 — есть ошибки.
 cmd_doctor() {
     local env_name="$DEFAULT_ENV"
     local fix="0"
@@ -107,8 +120,9 @@ cmd_doctor() {
     if [[ "$env_ok" == "0" ]]; then
         if [[ -d "$template_dir" ]]; then
             local rel src e_path
-            # слой 1: продуктовый каркас (путь в common — источник common,
-            # перекрыт в user — источник user: инвариант владельца сильнее)
+            # слой 1: продуктовый каркас; источник по умолчанию — common,
+            # но если путь перекрыт в слое user, берём user (то, что положил
+            # владелец, приоритетнее продуктового шаблона)
             local -a skel_paths=(".pi/agent/AGENTS.md" ".pi/agent/skills")
             layer_user_paths
             for rel in ${LAYER_USER_PATHS[@]+"${LAYER_USER_PATHS[@]}"}; do
@@ -318,11 +332,12 @@ cmd_doctor() {
             done
             if [[ "$manifest_err" == "0" ]]; then
                 local nm9="$env_dir/.pi/agent/npm/node_modules" i9 count9=${#manifest_names[@]}
-                # установки pi добавляют запись и в settings.json; но пакет
-                # может быть осознанно установлен без загрузки (напр. конфликт
-                # memory-расширений — см. шапку манифеста), поэтому settings
-                # проверяем только для пакетов, отсутствующих в node_modules:
-                # их нет нигде — чинится одной командой extensions install.
+                # установки pi добавляют пакет и в settings.json, но пакет
+                # может быть осознанно установлен БЕЗ включения в загрузку
+                # (его нет в "packages" settings.json) — это не поломка.
+                # Поэтому settings сверяем только для пакетов, которых нет
+                # в node_modules: их нет нигде — чинится одной командой
+                # extensions install.
                 load_settings_packages "$env_dir/.pi/agent/settings.json"
                 local -a set_missing=()
                 for ((i9 = 0; i9 < count9; i9++)); do

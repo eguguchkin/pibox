@@ -1,4 +1,6 @@
 # shellcheck shell=bash disable=SC2034  # переменные общие между модулями (после source)
+# Опции:
+#   --no-cache    сборка без кэша слоёв Docker
 cmd_build() {
     local no_cache=""
 
@@ -22,5 +24,3 @@ cmd_build() {
     log "Собираю образ $IMAGE_NAME..."
     docker build $no_cache -t "$IMAGE_NAME" "$PIBOX_DIR/docker"
 }
-
-# Управление окружениями

@@ -14,15 +14,23 @@
 #   4. Экспорт окружения (HOME, USER, PATH с mise-шимами)
 #   5. Передача управления: exec gosu pi:pi tini -- "$@"
 #
-# Контракт с Dockerfile (задача 3):
-#   - ENTRYPOINT ["/entrypoint.sh"], CMD ["pi"]
-#   - /opt/skel — эталонный home: заглушки + .pibox-слои + прочие dot-файлы
-#   - gosu, tini — в /usr/bin/
-#   - ENV HOME=/home/pi, PATH с mise-шимами — переэкспортируются здесь
+# Контракт с docker/Dockerfile — негласные связи; меняя одну сторону,
+# согласуй вторую (рассинхрон не даёт ошибок, только ломает запуск):
+#   - ENTRYPOINT ["/entrypoint.sh"], CMD ["pi"]: этот скрипт — точка входа,
+#     "$@" в конце = команда из CMD;
+#   - /opt/skel — эталонный home, собранный в образе: заглушки dot-файлов,
+#     .pibox-слои, прочие dot-файлы; entrypoint разворачивает его в /home/pi;
+#   - gosu, tini — в /usr/bin/ (пути захардкожены в вызовах ниже);
+#   - ENV HOME=/home/pi и PATH с mise-шимами заданы в Dockerfile, но
+#     переэкспортируются здесь — после подстановки реального UID.
 #
-# Контракт с run.sh (задача 6):
-#   - HOST_UID, HOST_GID — передаются через -e
-#   - PIBOX_GIT_SAFE=1 — опциональный флаг
+# Контракт с pibox CLI (раньше был файл run.sh, теперь bin/pibox +
+# lib/docker-cmd.sh): переменные, которые CLI передаёт через docker run -e
+# и этот скрипт читает при старте:
+#   - HOST_UID, HOST_GID — UID/GID хост-пользователя (под них подгоняется
+#     юзер pi; отсутствуют/пустые → дефолт 1000);
+#   - PIBOX_GIT_SAFE=1 — опциональный флаг: включить git safe.directory
+#     для workspace.
 # ============================================================================
 
 set -euo pipefail

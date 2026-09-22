@@ -4,18 +4,23 @@
 # Глобальный массив, в который собирается готовая команда docker run.
 RUN_CMD=()
 
-# Глобальный флаг режима `pibox webui` (1 = включён). Устанавливает
-# lib/cmd-webui.sh ДО вызова launch_container; docker-cmd добавляет
-# проброс webui-порта и команду контейнера `webui`, entrypoint-контракт
-# — в webui.sh и Dockerfile.
+# Глобальный флаг режима `pibox webui` (1 = включён) и параметры порта.
+# Двусторонний контракт с lib/cmd-webui.sh: ТАМ cmd_webui выставляет эти
+# переменные ДО вызова launch_container; ЗДЕСЬ (build_docker_run_cmd) по ним
+# добавляется проброс webui-порта, -e PI_WEB_PORT/WEBUI_HOST_PORT для
+# лаунчера внутри контейнера (см. его контракт в docker/webui.sh) и команда
+# контейнера «webui». Переименуешь переменную в одном из двух файлов —
+# вторая молча увидит пустую и запустит обычный TUI без порта.
 WEBUI_MODE=0
 WEBUI_PORT=8787
 WEBUI_HOST_PORT=""
 
 # Заполняет RUN_CMD аргументами для docker run.
-# Использует переменные окружения: ENV_NAME, CONTAINER_NAME, MEMORY, CPUS,
-# PIDS_LIMIT, GIT_SAFE, ENV_FILE, а также массивы
-# PUBLISH_OPTS, PASS_ENV_OPTS и PI_ARGS (види мы динамически из cmd_run).
+# Переменные берутся динамически: функция вызывается из launch_container
+# (cmd-run.sh), а bash даёт ей видеть локальные переменные вызывающей
+# функции (динамическая область видимости): ENV_NAME, CONTAINER_NAME,
+# MEMORY, CPUS, PIDS_LIMIT, GIT_SAFE, ENV_FILE, массивы PUBLISH_OPTS,
+# PASS_ENV_OPTS, PI_ARGS; глобальные IMAGE_NAME, WEBUI_MODE/PORT/HOST_PORT.
 build_docker_run_cmd() {
     RUN_CMD=(
         "docker" "run"
@@ -30,7 +35,8 @@ build_docker_run_cmd() {
     RUN_CMD+=("--cpus" "${CPUS:-2}")
     RUN_CMD+=("--pids-limit" "${PIDS_LIMIT:-512}")
 
-    # Переменные окружения для entrypoint.sh (задача 5)
+    # Переменные окружения для entrypoint.sh: он подставляет UID/GID
+    # хост-пользователя и включает git safe.directory по флагу
     RUN_CMD+=("-e" "HOST_UID=$(id -u)")
     RUN_CMD+=("-e" "HOST_GID=$(id -g)")
     RUN_CMD+=("-e" "PIBOX_GIT_SAFE=${GIT_SAFE:-0}")

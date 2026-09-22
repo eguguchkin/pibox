@@ -9,7 +9,7 @@
 #   build          сборка Docker-образа
 #   env            управление окружениями (list, create, remove)
 #   shell          отладочная оболочка в контейнере
-#   update         обновление установки
+#   update         обновление установки (пока заглушка)
 #   doctor         диагностика окружения (аудит + --fix)
 #   extensions     установка расширений из манифеста template/extensions.txt
 #   user           слои шаблона: push (user→env) / pull (env→user)
@@ -29,8 +29,17 @@
 #   -h, --help             эта справка
 #   -V, --version          версия
 #
-# Контракт с entrypoint.sh (задача 5):
-#   Передаёт HOST_UID, HOST_GID, PIBOX_GIT_SAFE через -e
+# Контракт с docker/entrypoint.sh — негласная связь: pibox CLI передаёт в
+# контейнер три переменные через docker run -e (см. build_docker_run_cmd в
+# docker-cmd.sh), а entrypoint.sh при старте их читает:
+#   HOST_UID, HOST_GID     — UID/GID хост-пользователя; entrypoint заводит
+#                            в контейнере юзера pi с этими UID/GID, чтобы
+#                            файлы в bind-mount имели хозяина с хоста;
+#   PIBOX_GIT_SAFE         — 1 = включить git safe.directory для workspace.
+# Переименуешь переменные в одной из сторон (здесь или в entrypoint.sh) —
+# ошибка не возникнет: entrypoint просто не увидит значения и молча возьмёт
+# дефолты (UID=1000, git safe выключен). Подробности — docs/PROJECT.md,
+# раздел «Контракты между компонентами».
 # ============================================================================
 
 # --- Константы ----------------------------------------------------------------

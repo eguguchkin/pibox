@@ -1,4 +1,8 @@
 # shellcheck shell=bash disable=SC2034  # переменные общие между модулями (после source)
+
+# Управление окружениями: env list | env create NAME | env remove NAME.
+# remove для default запрещён; create/remove валидируют имя через
+# validate_env_name (common.sh).
 cmd_env() {
     local subcmd="${1:-list}"
     shift || true
@@ -82,17 +86,3 @@ cmd_shell() {
         -v "$PIBOX_DIR/env/$env_name/.cache/jiti:/tmp/jiti" \
         "$IMAGE_NAME" bash
 }
-
-# Установка расширений из манифеста template/extensions.txt.
-#
-# Каждый пакет ставится отдельным запуском pi внутри одноразового контейнера
-# (смонтирован только env; workspace не нужен — npm-установки ни от него
-# не зависят, а монтирование произвольного cwd в фоновую операцию — лишний риск).
-# pi сам кладёт файлы под хост-пользователя? Нет: контейнер работает от pi
-# (uid=HOST_UID через entrypoint), поэтому файлы в bind-mount сразу с
-# владельцем хост-юзера — chown не нужен.
-#
-# Пропускает уже установленное совпадающей версии; для остальных вызывает
-# pi install npm:имя@версия. settings.json окружения дополняется записями
-
-# --- живая визуализация установки (в стиле docker build) ---------------------
