@@ -29,8 +29,8 @@
 
 ARG UBUNTU_VERSION=24.04
 ARG NODE_IMAGE=node:24-bookworm-slim
-ARG PI_VERSION=0.85.1
-ARG PI_WEB_UI_VERSION=0.91.0
+ARG PI_VERSION=0.86.1
+ARG PI_WEB_UI_VERSION=0.94.1
 
 # ── Stage 1: builder — node + npm + pi + pi-web-ui в /usr/local ───────────────
 FROM ${NODE_IMAGE} AS builder

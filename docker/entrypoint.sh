@@ -10,9 +10,10 @@
 #      ~/.<f>.pibox = сток pibox (обновляется при каждом запуске)
 #      ~/.<f>.user = пользовательский слой (миграция из старого .<f>)
 #      Прочие skel-файлы — одноразовый cp -rn (как раньше).
-#   3. Опционально: git safe.directory для workspace
-#   4. Экспорт окружения (HOME, USER, PATH с mise-шимами)
-#   5. Передача управления: exec gosu pi:pi tini -- "$@"
+#   3. npm prefix → $HOME/.local (персистентность глобальных npm-пакетов)
+#   4. Опционально: git safe.directory для workspace
+#   5. Экспорт окружения (HOME, USER, PATH с mise-шимами)
+#   6. Передача управления: exec gosu pi:pi tini -- "$@"
 #
 # Контракт с docker/Dockerfile — негласные связи; меняя одну сторону,
 # согласуй вторую (рассинхрон не даёт ошибок, только ломает запуск):
@@ -209,6 +210,52 @@ ensure_npm_prefix() {
     fi
 }
 
+# --- 4a. Шимы SDK для расширений -----------------------------------------------
+# Pi + SDK (@earendil-works/pi-coding-agent, pi-tui, pi-ai) живут в
+# /usr/local/lib/node_modules (в образе), а расширения — в персистентном
+# ~/.pi/agent/npm/node_modules (bind-mount). Раннеры расширений (напр.
+# субагенты) резолвят SDK вверх по дереву от себя — в npm-дерево окружения,
+# куда SDK не попадает. Лечится шим-пакетами: package.json + index.js с
+# одним реэкспортом настоящего SDK из /usr/local.
+# npm при pi install/pi remove пересчитывает дерево и ВЫЧИЩАЕТ чужие пакеты —
+# поэтому шимы восстанавливаем при каждом старте (идемпотентно; живой
+# настоящий пакет на месте шима не трогаем).
+ensure_sdk_shims() {
+    local sdk="/usr/local/lib/node_modules/@earendil-works/pi-coding-agent"
+    [ -d "$sdk" ] || return 0 # SDK нет в образе (нестандартная сборка) — неча шимить
+    local real_shim_dir="$PI_HOME/.pi/agent/npm/node_modules/@earendil-works"
+    local shim name dep
+    for name in pi-coding-agent pi-tui pi-ai; do
+        # pi-coding-agent — верхнеуровневый SDK; pi-tui/pi-ai — вложенные
+        # зависимости внутри него (npm дедупнул их в его node_modules)
+        if [ "$name" = "pi-coding-agent" ]; then
+            dep="$sdk"
+        else
+            dep="$sdk/node_modules/@earendil-works/$name"
+        fi
+        [ -d "$dep" ] || continue # нет в этом SDK — шим не нужен
+        shim="$real_shim_dir/$name"
+        # Живой настоящий пакет уже стоит (не наш шим) — не трогаем.
+        if [ -f "$shim/package.json" ] && ! grep -q '"pibox-shim"' "$shim/package.json" 2>/dev/null; then
+            continue
+        fi
+        mkdir -p "$shim"
+        cat >"$shim/package.json" <<EOF
+{
+  "name": "@earendil-works/$name",
+  "version": "0.0.0-pibox-shim",
+  "description": "pibox shim: re-exports the real SDK from /usr/local (restored by entrypoint)",
+  "type": "module",
+  "pibox-shim": true
+}
+EOF
+        cat >"$shim/index.js" <<EOF
+export * from "$dep/dist/index.js";
+EOF
+        chown -R "${HOST_UID}:${HOST_GID}" "$shim"
+    done
+}
+
 # --- 5. Git safe.directory (опционально) --------------------------------------
 
 setup_git_safe() {
@@ -224,7 +271,7 @@ setup_git_safe() {
     fi
 }
 
-# --- 5. Подготовка окружения для exec -----------------------------------------
+# --- 6. Подготовка окружения для exec -----------------------------------------
 
 prepare_env() {
     # КРИТИЧНО: gosu меняет UID/GID, но НЕ переписывает env-переменные.
@@ -246,7 +293,7 @@ prepare_env() {
     export FACELIFT_MAX_PREVIEW_LINES="${FACELIFT_MAX_PREVIEW_LINES:-24}"
 }
 
-# --- 6. Передача управления ----------------------------------------------------
+# --- 7. Передача управления ----------------------------------------------------
 
 exec_command() {
     # gosu pi:pi — смена UID/GID (exec, не fork — PID 1 сохраняется)
@@ -288,6 +335,7 @@ Check Dockerfile ENTRYPOINT."
     adjust_uid_gid
     ensure_dotfiles
     ensure_npm_prefix
+    ensure_sdk_shims
     setup_git_safe
     prepare_env
     exec_command "$@"

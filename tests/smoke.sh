@@ -314,6 +314,16 @@ expect_contains "C8: mount workspace (в подкаталог по имени)" 
 expect_contains "C8: cwd контейнера = подкаталог проекта" "$DRY" "-w $WS_IN_CONTAINER"
 expect_contains "C9: HOST_UID передаётся" "$DRY" "-e HOST_UID=$HOST_UID"
 expect_contains "C9: HOST_GID передаётся" "$DRY" "-e HOST_GID=$HOST_GID"
+
+# C9b: cleanup_workspace_mounts удаляет только пустые точки монтирования
+# (создаются CLI до docker run и остаются фантомами после выхода проекта)
+WS_MOUNTS="$TEST_PIBOX/env/default/workspace"
+mkdir -p "$WS_MOUNTS/ghost-a" "$WS_MOUNTS/ghost-b/nested" "$WS_MOUNTS/keepme"
+touch "$WS_MOUNTS/keepme/file"
+PIBOX_DIR="$TEST_PIBOX" bash -c 'source "$1/lib/common.sh"; cleanup_workspace_mounts default' _ "$TEST_PIBOX"
+if [ ! -d "$WS_MOUNTS/ghost-a" ]; then ok "C9b: пустая фантомная точка удалена"; else fail "C9b: ghost-a осталась"; fi
+if [ -d "$WS_MOUNTS/ghost-b/nested" ]; then ok "C9b: каталог с вложенным не тронут"; else fail "C9b: ghost-b удалена с содержимым"; fi
+if [ -f "$WS_MOUNTS/keepme/file" ]; then ok "C9b: непустой каталог не тронут"; else fail "C9b: keepme потерян"; fi
 if [ -f "$TEST_PIBOX/env/default/.pi/agent/models.json" ]; then
     ok "C3: models.json из слоя user в default при первом dry-run"
 else
@@ -733,8 +743,13 @@ if command -v jq >/dev/null 2>&1; then
     D9_DRIFT="$(cd "$TEST_WS" && "$BIN" doctor -e smoke-env 2>/dev/null)" || true
     expect_contains "C20: D9 — дрейф версии обнаружен" "$D9_DRIFT" "версия не совпадает: pi-lens"
 
-    # отсутствие пакета (берём реальное имя из манифеста)
-    rm -rf "$DN9/pi-subagents"
+    # отсутствие пакета (берём реальное имя из манифеста — не то, что уже
+    # удалялось в ранних проверках: расширения типа pi-lens по пути
+    # проверяются в D9-дрейфе выше)
+    manifest_first="$(grep -m1 '^npm:' "$TEST_PIBOX/template/extensions.txt")"
+    manifest_first="${manifest_first#npm:}"
+    manifest_first="${manifest_first%%@*}" # имя до @ (обязательно в манифесте)
+    rm -rf "${DN9:?}/$manifest_first"
     D9_MISS="$(cd "$TEST_WS" && "$BIN" doctor -e smoke-env 2>/dev/null)" || true
     expect_contains "C20: D9 — отсутствие пакета (FAIL)" "$D9_MISS" "отсутствуют 1 из $N9"
     # пакет удалён из дерева и его нет в settings.json

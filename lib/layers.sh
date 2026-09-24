@@ -77,6 +77,8 @@ layers_drift() {
 # pibox user push — применить слой 2 к окружению (то же, что делает старт).
 user_push() {
     local env_name="$1"
+    local env_dir="$PIBOX_DIR/env/$env_name"
+    [[ -d "$env_dir" ]] || die "Окружение '$env_name' не найдено: $env_dir"
     apply_user_layer "$env_name"
     log "Готово: template/user применён к '$env_name'"
 }

@@ -12,6 +12,150 @@
 # без твина пакет сообщается как подозрительный и не трогается.
 #
 # Коды выхода: 0 — ошибок нет (предупреждения допустимы), 1 — есть ошибки.
+
+# D9: сверка установленных расширений окружения с манифестом
+# template/extensions.txt (нужен jq; без него проверка пропускается).
+# Отчёт — через хелперы d_* из cmd_doctor (динамическая область видимости
+# bash: счётчики errors/warnings в cmd_doctor обновляются и отсюда).
+# Три вида расхождений:
+#   отсутствует пакет (WARN)   — установка: pibox extensions install
+#   версия не совпадает (WARN) — обновление той же командой
+#   пакет вне манифеста (INFO) — установлен вручную, pibox его не трогает
+# Расхождения с манифестом — не ошибки: свежее окружение без расширений —
+# нормальное состояние (doctor не должен падать с кодом 1).
+# $1 — имя окружения, $2 — каталог окружения, $3 — 1, если окружения нет.
+doctor_check_manifest() {
+    local env_name="$1" env_dir="$2" env_ok="$3"
+
+    if ! command -v jq >/dev/null 2>&1; then
+        d_info "jq не найден — сверка расширений с манифестом пропущена"
+        return 0
+    fi
+    load_extensions_manifest
+    if [[ ${#EXT_ENTRIES[@]} -eq 0 ]]; then
+        d_info "манифест расширений пуст или отсутствует: $EXTENSIONS_FILE"
+        return 0
+    fi
+    [[ "$env_ok" == "1" ]] && return 0 # окружения нет — D4 уже сообщил, сверять не с чем
+
+    local nm="$env_dir/.pi/agent/npm/node_modules"
+    local entry manifest_err=0 total=0 missing=0 drift=0 have
+    local i short found sp
+    local -a manifest_names=() manifest_vers=()
+    for entry in ${EXT_ENTRIES[@]+"${EXT_ENTRIES[@]}"}; do
+        if parse_ext_entry "$entry"; then
+            manifest_names+=("$EXT_NAME")
+            manifest_vers+=("$EXT_VER")
+        else
+            d_err "манифест: не удалось разобрать запись: $entry"
+            manifest_err=1
+        fi
+    done
+    [[ "$manifest_err" == "0" ]] || return 0
+
+    # Установка pi добавляет пакет и в settings.json, но пакет может быть
+    # осознанно установлен БЕЗ включения в загрузку (его нет в "packages"
+    # settings.json) — это не поломка. Поэтому settings сверяем только для
+    # пакетов, которых нет в node_modules: их нет нигде — чинится одной
+    # командой extensions install.
+    load_settings_packages "$env_dir/.pi/agent/settings.json"
+    local -a set_missing=()
+    local count=${#manifest_names[@]}
+    for ((i = 0; i < count; i++)); do
+        total=$((total + 1))
+        have="$(get_installed_ext_version "$nm" "${manifest_names[$i]}")"
+        if [[ -z "$have" ]]; then
+            missing=$((missing + 1))
+            short="npm:${manifest_names[$i]}"
+            found=""
+            for sp in ${EXT_SETTINGS_PACKAGES[@]+"${EXT_SETTINGS_PACKAGES[@]}"}; do
+                if [[ "$sp" == "$short" || "$sp" == "npm:${manifest_names[$i]}@${manifest_vers[$i]}" ]]; then
+                    found=1
+                    break
+                fi
+            done
+            [[ -n "$found" ]] || set_missing+=("$short")
+        elif [[ "$have" != "${manifest_vers[$i]}" ]]; then
+            drift=$((drift + 1))
+            d_warn "версия не совпадает: ${manifest_names[$i]} — установлено ${have:-нет}, в манифесте ${manifest_vers[$i]}"
+        fi
+    done
+    if [[ "$missing" -gt 0 ]]; then
+        d_warn "расширения: отсутствуют $missing из $total (манифест $EXTENSIONS_FILE) — установка: pibox extensions install -e $env_name"
+    elif [[ "$drift" -eq 0 ]]; then
+        d_ok "расширения: все $total из манифеста установлены"
+    else
+        d_warn "расширения: версии расходятся с манифестом в $drift пакетах — обновление: pibox extensions install -e $env_name"
+    fi
+
+    # Замыкание зависимостей: рекурсивно собираем deps (+optionalDeps)
+    # всех пакетов из манифеста по установленным package.json.
+    # needed_req — обязательные deps (их отсутствие = сломанная установка);
+    # optional-депы не обязаны быть на диске, но не дают считать сам пакет
+    # «лишним». [bash3.2] Без ассоциативных массивов: pkg_* — параллельные
+    # индексированные массивы (имя/строка deps), seen/needed_req — списки
+    # слов в строке, поиск по « x ».
+    local -a pkg_names=() pkg_req=() pkg_opt=()
+    local pj rel
+    while IFS= read -r pj; do
+        rel="${pj#"$nm"/}"
+        rel="${rel%/package.json}"
+        pkg_names+=("$rel")
+        pkg_req+=("$(jq -r '[.dependencies // {} | keys[]] | join(" ")' "$pj" 2>/dev/null)")
+        pkg_opt+=("$(jq -r '[.optionalDependencies // {} | keys[]] | join(" ")' "$pj" 2>/dev/null)")
+    done < <(find "$nm" -mindepth 2 -maxdepth 3 -name package.json 2>/dev/null)
+
+    local seen="" needed_req="" q dep q_req q_opt
+    local -a queue=()
+    for entry in ${manifest_names[@]+"${manifest_names[@]}"}; do queue+=("$entry"); done
+    while [[ ${#queue[@]} -gt 0 ]]; do
+        q="${queue[0]}"
+        queue=("${queue[@]:1}")
+        [[ " $seen " == *" $q "* ]] && continue
+        seen+="$q "
+        # deps пакета q — из параллельных массивов
+        q_req=""
+        q_opt=""
+        for ((i = 0; i < ${#pkg_names[@]}; i++)); do
+            [[ "${pkg_names[$i]}" == "$q" ]] && {
+                q_req="${pkg_req[$i]}"
+                q_opt="${pkg_opt[$i]}"
+                break
+            }
+        done
+        for dep in $q_req $q_opt; do
+            [[ -z "$dep" ]] && continue
+            [[ " $seen " == *" $dep "* ]] || queue+=("$dep")
+        done
+        for dep in $q_req; do
+            [[ -z "$dep" ]] && continue
+            [[ " $needed_req " == *" $dep "* ]] || needed_req+="$dep "
+        done
+    done
+
+    # Сверка: установленное вне замыкания — «лишнее» (ручная установка);
+    # обязательная зависимость, которой нет на диске — сломанная установка.
+    local -a extra_pkgs=() dep_missing=()
+    for ((i = 0; i < ${#pkg_names[@]}; i++)); do
+        rel="${pkg_names[$i]}"
+        [[ " $seen " == *" $rel "* ]] || extra_pkgs+=("$rel")
+    done
+    for rel in $needed_req; do
+        [[ ! -f "$nm/$rel/package.json" ]] && dep_missing+=("$rel")
+    done
+    if [[ ${#extra_pkgs[@]} -gt 0 ]]; then
+        d_info "вне манифеста и не зависимости (${#extra_pkgs[@]}): ${extra_pkgs[*]}"
+    fi
+    if [[ ${#dep_missing[@]} -gt 0 ]]; then
+        d_warn "сломанные зависимости (${#dep_missing[@]}): ${dep_missing[*]} — переустановка: pibox extensions install -e $env_name"
+    fi
+
+    # отсутствующие в node_modules и в settings.json (см. выше)
+    if [[ ${#set_missing[@]} -gt 0 ]]; then
+        d_warn "в settings.json нет ${#set_missing[@]} пакетов (${set_missing[*]}) — чинит pibox extensions install -e $env_name"
+    fi
+}
+
 cmd_doctor() {
     local env_name="$DEFAULT_ENV"
     local fix="0"
@@ -303,137 +447,8 @@ cmd_doctor() {
         d_info "контейнер $cname не запущен (это нормально; запуск: pibox run -e $env_name)"
     fi
 
-    # D9: расширения — сверка окружения с манифестом template/extensions.txt
-    # (нужен jq; без него проверка пропускается). Три вида расхождений:
-    #   отсутствует пакет (WARN)  — установка: pibox extensions install
-    #   версия не совпадает (WARN) — обновление той же командой
-    #   пакет вне манифеста (INFO) — установлен вручную, pibox его не трогает
-    # Расхождения с манифестом — не ошибки: свежее окружение без расширений —
-    # нормальное состояние (doctor не должен падать с кодом 1).
-    if ! command -v jq >/dev/null 2>&1; then
-        d_info "jq не найден — сверка расширений с манифестом пропущена"
-    else
-        load_extensions_manifest
-        if [[ ${#EXT_ENTRIES[@]} -eq 0 ]]; then
-            d_info "манифест расширений пуст или отсутствует: $EXTENSIONS_FILE"
-        elif [[ "$env_ok" == "1" ]]; then
-            : # окружения нет — D4 уже сообщил, сверять не с чем
-        else
-            local m_entry m_have m_tot=0 m_miss=0 m_drift=0 manifest_err=0
-            local -a manifest_names=() manifest_vers=()
-            for m_entry in ${EXT_ENTRIES[@]+"${EXT_ENTRIES[@]}"}; do
-                if parse_ext_entry "$m_entry"; then
-                    manifest_names+=("$EXT_NAME")
-                    manifest_vers+=("$EXT_VER")
-                else
-                    d_err "манифест: не удалось разобрать запись: $m_entry"
-                    manifest_err=1
-                fi
-            done
-            if [[ "$manifest_err" == "0" ]]; then
-                local nm9="$env_dir/.pi/agent/npm/node_modules" i9 count9=${#manifest_names[@]}
-                # установки pi добавляют пакет и в settings.json, но пакет
-                # может быть осознанно установлен БЕЗ включения в загрузку
-                # (его нет в "packages" settings.json) — это не поломка.
-                # Поэтому settings сверяем только для пакетов, которых нет
-                # в node_modules: их нет нигде — чинится одной командой
-                # extensions install.
-                load_settings_packages "$env_dir/.pi/agent/settings.json"
-                local -a set_missing=()
-                for ((i9 = 0; i9 < count9; i9++)); do
-                    m_tot=$((m_tot + 1))
-                    m_have="$(get_installed_ext_version "$nm9" "${manifest_names[$i9]}")"
-                    if [[ -z "$m_have" ]]; then
-                        m_miss=$((m_miss + 1))
-                        local short9="npm:${manifest_names[$i9]}" found9=0 sp9
-                        for sp9 in ${EXT_SETTINGS_PACKAGES[@]+"${EXT_SETTINGS_PACKAGES[@]}"}; do
-                            [[ "$sp9" == "$short9" || "$sp9" == "npm:${manifest_names[$i9]}@${manifest_vers[$i9]}" ]] && found9=1 && break
-                        done
-                        [[ "$found9" == "1" ]] || set_missing+=("$short9")
-                    elif [[ "$m_have" != "${manifest_vers[$i9]}" ]]; then
-                        m_drift=$((m_drift + 1))
-                        d_warn "версия не совпадает: ${manifest_names[$i9]} — установлено ${m_have:-нет}, в манифесте ${manifest_vers[$i9]}"
-                    fi
-                done
-                if [[ "$m_miss" -gt 0 ]]; then
-                    d_warn "расширения: отсутствуют $m_miss из $m_tot (манифест $EXTENSIONS_FILE) — установка: pibox extensions install -e $env_name"
-                elif [[ "$m_drift" -eq 0 ]]; then
-                    d_ok "расширения: все $m_tot из манифеста установлены"
-                else
-                    d_warn "расширения: версии расходятся с манифестом в $m_drift пакетах — обновление: pibox extensions install -e $env_name"
-                fi
-
-                # Замыкание зависимостей: рекурсивно собираем deps (+optionalDeps)
-                # всех пакетов из манифеста по установленным package.json.
-                # needed_req — обязательные deps (их отсутствие = сломанная установка),
-                # needed_any — включая optional (не обязаны быть на диске, но
-                # не дают считать сам пакет «лишним»).
-                # [bash3.2] Без ассоциативных массивов и отрицательных индексов:
-                # pkg_*_* — параллельные индексированные массивы (имя/строка deps);
-                # seen9/needed_req — списки слов в строке, поиск по « x ».
-                local -a pkg_names=() pkg_req=() pkg_opt=()
-                local pj9 rd9
-                while IFS= read -r pj9; do
-                    rd9="${pj9#"$nm9"/}"
-                    rd9="${rd9%/package.json}"
-                    pkg_names+=("$rd9")
-                    pkg_req+=("$(jq -r '[.dependencies // {} | keys[]] | join(" ")' "$pj9" 2>/dev/null)")
-                    pkg_opt+=("$(jq -r '[.optionalDependencies // {} | keys[]] | join(" ")' "$pj9" 2>/dev/null)")
-                done < <(find "$nm9" -mindepth 2 -maxdepth 3 -name package.json 2>/dev/null)
-
-                local seen9="" needed_req="" q9 dep9
-                local -a queue9=()
-                for m9 in ${manifest_names[@]+"${manifest_names[@]}"}; do queue9+=("$m9"); done
-                while [[ ${#queue9[@]} -gt 0 ]]; do
-                    q9="${queue9[0]}"
-                    queue9=("${queue9[@]:1}")
-                    [[ " $seen9 " == *" $q9 "* ]] && continue
-                    seen9+="$q9 "
-                    # deps пакета q9 — из параллельных массивов
-                    local q_req="" q_opt=""
-                    local pi9
-                    for ((pi9 = 0; pi9 < ${#pkg_names[@]}; pi9++)); do
-                        [[ "${pkg_names[$pi9]}" == "$q9" ]] && {
-                            q_req="${pkg_req[$pi9]}"
-                            q_opt="${pkg_opt[$pi9]}"
-                            break
-                        }
-                    done
-                    for dep9 in $q_req $q_opt; do
-                        [[ -z "$dep9" ]] && continue
-                        [[ " $seen9 " == *" $dep9 "* ]] || queue9+=("$dep9")
-                    done
-                    for dep9 in $q_req; do
-                        [[ -z "$dep9" ]] && continue
-                        [[ " $needed_req " == *" $dep9 "* ]] || needed_req+="$dep9 "
-                    done
-                done
-
-                # Сверка: установленное вне замыкания — «лишнее» (ручная
-                # установка); обязательная зависимость, которой нет на диске —
-                # сломанная установка.
-                local -a extra_pkgs=() dep_missing=()
-                for ((pi9 = 0; pi9 < ${#pkg_names[@]}; pi9++)); do
-                    rd9="${pkg_names[$pi9]}"
-                    [[ " $seen9 " == *" $rd9 "* ]] || extra_pkgs+=("$rd9")
-                done
-                for rd9 in $needed_req; do
-                    [[ ! -f "$nm9/$rd9/package.json" ]] && dep_missing+=("$rd9")
-                done
-                if [[ ${#extra_pkgs[@]} -gt 0 ]]; then
-                    d_info "вне манифеста и не зависимости (${#extra_pkgs[@]}): ${extra_pkgs[*]}"
-                fi
-                if [[ ${#dep_missing[@]} -gt 0 ]]; then
-                    d_warn "сломанные зависимости (${#dep_missing[@]}): ${dep_missing[*]} — переустановка: pibox extensions install -e $env_name"
-                fi
-
-                # отсутствующие в node_modules и в settings.json (см. выше)
-                if [[ ${#set_missing[@]} -gt 0 ]]; then
-                    d_warn "в settings.json нет ${#set_missing[@]} пакетов (${set_missing[*]}) — чинит pibox extensions install -e $env_name"
-                fi
-            fi
-        fi
-    fi
+    # D9: сверка расширений с манифестом (отдельная функция — выше)
+    doctor_check_manifest "$env_name" "$env_dir" "$env_ok"
 
     # Итог
     printf '\n'

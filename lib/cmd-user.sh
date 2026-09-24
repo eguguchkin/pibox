@@ -19,8 +19,9 @@ cmd_user() {
         shift
     fi
 
-    # pibox user push|pull -e NAME [PATH…] — -e может стоять и после
-    if [[ "$1" == "-e" || "$1" == "--env" ]]; then
+    # pibox user push|pull -e NAME [PATH…] — -e может стоять и после;
+    # ${1:-} — под set -u при отсутствии аргументов $1 «не существует»
+    if [[ "${1:-}" == "-e" || "${1:-}" == "--env" ]]; then
         [[ $# -ge 2 ]] || die "Опция -e требует имя окружения: pibox user pull -e NAME"
         env_name="$2"
         shift 2

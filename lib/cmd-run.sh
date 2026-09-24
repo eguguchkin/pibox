@@ -146,6 +146,9 @@ launch_container() {
     # создаст bind-mount-цель от root и pi не сможет туда писать.
     mkdir -p "$PIBOX_DIR/env/$ENV_NAME/.cache/jiti"
 
+    # Фантомные пустые точки монтирования от прошлых проектов — до запуска.
+    cleanup_workspace_mounts "$ENV_NAME"
+
     # Точка монтирования проекта (подкаталог по имени): тоже создаём заранее,
     # иначе docker сделает /home/pi/workspace/<имя> от root внутри env-маунта.
     mkdir -p "$PIBOX_DIR/env/$ENV_NAME/workspace/$(workspace_name)"
@@ -169,6 +172,9 @@ launch_container() {
     fi
     if [[ ($rc -eq 0 || $interrupted -eq 1) && "$KEEP" != "1" ]]; then
         docker rm -f "$CONTAINER_NAME" >/dev/null 2>&1 || true
+        # Свежая пустая точка монтирования этого проекта — тоже в мусор
+        # (проект на хосте никуда не делся, каталог пересоздастся при нужде).
+        cleanup_workspace_mounts "$ENV_NAME"
         if [[ $interrupted -eq 1 ]]; then
             log "web-ui остановлен (Ctrl+C), контейнер '$CONTAINER_NAME' удалён"
         else

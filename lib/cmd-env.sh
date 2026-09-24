@@ -73,10 +73,12 @@ cmd_shell() {
     # Проект — в подкаталог по имени (workspace_path из common.sh), cwd — туда же.
     local ws_path
     ws_path="$(workspace_path)"
+    cleanup_workspace_mounts "$env_name"
     mkdir -p "$PIBOX_DIR/env/$env_name/workspace/$(workspace_name)"
 
     log "Запуск оболочки в окружении '$env_name'..."
     docker run --rm -it \
+        --add-host host.docker.internal:host-gateway \
         --cap-add SYS_PTRACE --cap-add NET_RAW \
         -e HOST_UID="$(id -u)" -e HOST_GID="$(id -g)" \
         -e PIBOX_GIT_SAFE="${PIBOX_GIT_SAFE:-0}" \
