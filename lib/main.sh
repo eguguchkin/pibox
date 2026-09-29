@@ -25,6 +25,9 @@ main() {
     shell)
         cmd_shell "$@"
         ;;
+    status)
+        cmd_status "$@"
+        ;;
     webui)
         cmd_webui "$@"
         ;;

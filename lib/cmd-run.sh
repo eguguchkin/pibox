@@ -6,6 +6,7 @@ cmd_run() {
     local -a PI_ARGS=()
     local -a PUBLISH_OPTS=()
     local -a PASS_ENV_OPTS=()
+    local -a COMMON_TAIL=()
 
     local ENV_NAME=""
     local CONTAINER_NAME=""
@@ -16,13 +17,38 @@ cmd_run() {
     local GIT_SAFE=""
     local DRY_RUN="0"
     local KEEP="0"
-    # Разбор аргументов для run
+    # Режим webui: run = обычный TUI. launch_container и build_docker_run_cmd
+    # читают эти локальные через динамическую область видимости (docker-cmd.sh).
+    local WEBUI_MODE=0
+    local WEBUI_PORT=8787
+    local WEBUI_HOST_PORT=""
+
+    if ! parse_common_run_opts run "$@"; then
+        # `--`: хвост (включая флаги) уходит в pi
+        PI_ARGS=(${COMMON_TAIL[@]+"${COMMON_TAIL[@]}"})
+    fi
+
+    launch_container
+}
+
+# Общий разбор опций run и webui (общий поднабор).
+# Заполняет локальные вызывающей функции через динамическую область
+# видимости (тот же контракт, что у launch_container): ENV_NAME,
+# CONTAINER_NAME, ENV_FILE, MEMORY, CPUS, PIDS_LIMIT, GIT_SAFE, DRY_RUN,
+# KEEP, PUBLISH_OPTS, PASS_ENV_OPTS, COMMON_TAIL; для webui — ещё PORT.
+# $1 — имя подкоманды для сообщений об ошибках (run|webui); --port валиден
+# только для webui, в run это «неизвестная опция».
+# Возврат: 0 = разобрано до конца; 1 = встретилось `--`, хвост (включая
+# флаги) — в COMMON_TAIL.
+parse_common_run_opts() {
+    local context="$1"
+    shift
     while [[ $# -gt 0 ]]; do
         case "$1" in
         --)
             shift
-            PI_ARGS=("$@")
-            break
+            COMMON_TAIL=("$@")
+            return 1
             ;;
         -e | --env)
             [[ $# -ge 2 ]] || die "Опция $1 требует аргумент"
@@ -59,6 +85,21 @@ cmd_run() {
             PIDS_LIMIT="$2"
             shift 2
             ;;
+        --name)
+            [[ $# -ge 2 ]] || die "Опция $1 требует аргумент"
+            CONTAINER_NAME="$2"
+            shift 2
+            ;;
+        --port)
+            if [[ "$context" != "webui" ]]; then
+                err "Неизвестная опция или аргумент для $context: $1"
+                usage
+                exit 1
+            fi
+            [[ $# -ge 2 ]] || die "Опция $1 требует аргумент"
+            PORT="$2"
+            shift 2
+            ;;
         --git-safe)
             GIT_SAFE=1
             shift
@@ -71,11 +112,6 @@ cmd_run() {
             DRY_RUN=1
             shift
             ;;
-        --name)
-            [[ $# -ge 2 ]] || die "Опция $1 требует аргумент"
-            CONTAINER_NAME="$2"
-            shift 2
-            ;;
         -h | --help)
             usage
             exit 0
@@ -85,21 +121,21 @@ cmd_run() {
             exit 0
             ;;
         *)
-            err "Неизвестная опция или аргумент для run: $1"
+            err "Неизвестная опция или аргумент для $context: $1"
             usage
             exit 1
             ;;
         esac
     done
-
-    launch_container
+    return 0
 }
 
 # Общее ядро запуска контейнера: cmd_run и cmd_webui (lib/cmd-webui.sh).
 # Видит локальные переменные вызывающей функции (динамическая область
 # видимости bash): ENV_NAME, CONTAINER_NAME, ENV_FILE, MEMORY, CPUS,
 # PIDS_LIMIT, GIT_SAFE, DRY_RUN, KEEP, PI_ARGS, PUBLISH_OPTS, PASS_ENV_OPTS,
-# а также глобальный флаг WEBUI_MODE (1 = режим pibox webui).
+# а также WEBUI_MODE/WEBUI_PORT/WEBUI_HOST_PORT — локальные точки входа
+# (cmd_run / cmd_webui); 1 = режим pibox webui.
 launch_container() {
     # Дефолты
     ENV_NAME="${ENV_NAME:-$DEFAULT_ENV}"

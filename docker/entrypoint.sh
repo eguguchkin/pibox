@@ -215,15 +215,15 @@ ensure_npm_prefix() {
 # /usr/local/lib/node_modules (в образе), а расширения — в персистентном
 # ~/.pi/agent/npm/node_modules (bind-mount). Раннеры расширений (напр.
 # субагенты) резолвят SDK вверх по дереву от себя — в npm-дерево окружения,
-# куда SDK не попадает. Лечится шим-пакетами: package.json + index.js с
-# одним реэкспортом настоящего SDK из /usr/local.
+# куда SDK не попадает. Лечится симлинками на настоящие пакеты из /usr/local:
+# реальный package.json = настоящая exports-карта, все сабпути
+# (pi-ai/compat, pi-ai/providers/*, …) резолвятся как надо.
 # npm при pi install/pi remove пересчитывает дерево и ВЫЧИЩАЕТ чужие пакеты —
 # поэтому шимы восстанавливаем при каждом старте (идемпотентно; живой
 # настоящий пакет на месте шима не трогаем).
 ensure_sdk_shims() {
     local sdk="/usr/local/lib/node_modules/@earendil-works/pi-coding-agent"
     [ -d "$sdk" ] || return 0 # SDK нет в образе (нестандартная сборка) — неча шимить
-    local real_shim_dir="$PI_HOME/.pi/agent/npm/node_modules/@earendil-works"
     local shim name dep
     for name in pi-coding-agent pi-tui pi-ai; do
         # pi-coding-agent — верхнеуровневый SDK; pi-tui/pi-ai — вложенные
@@ -233,26 +233,15 @@ ensure_sdk_shims() {
         else
             dep="$sdk/node_modules/@earendil-works/$name"
         fi
-        [ -d "$dep" ] || continue # нет в этом SDK — шим не нужен
-        shim="$real_shim_dir/$name"
-        # Живой настоящий пакет уже стоит (не наш шим) — не трогаем.
-        if [ -f "$shim/package.json" ] && ! grep -q '"pibox-shim"' "$shim/package.json" 2>/dev/null; then
+        [ -d "$dep" ] || { warn "SDK: @earendil-works/$name не найден в образе — шим не создан"; continue; }
+        shim="$PI_HOME/.pi/agent/npm/node_modules/@earendil-works/$name"
+        # Живой настоящий пакет (обычный каталог, не наш симлинк) — не трогаем.
+        if [ -e "$shim" ] && [ ! -L "$shim" ]; then
             continue
         fi
-        mkdir -p "$shim"
-        cat >"$shim/package.json" <<EOF
-{
-  "name": "@earendil-works/$name",
-  "version": "0.0.0-pibox-shim",
-  "description": "pibox shim: re-exports the real SDK from /usr/local (restored by entrypoint)",
-  "type": "module",
-  "pibox-shim": true
-}
-EOF
-        cat >"$shim/index.js" <<EOF
-export * from "$dep/dist/index.js";
-EOF
-        chown -R "${HOST_UID}:${HOST_GID}" "$shim"
+        rm -rf "$shim"
+        mkdir -p "$(dirname "$shim")"
+        ln -s "$dep" "$shim"
     done
 }
 

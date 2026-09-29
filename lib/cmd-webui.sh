@@ -22,11 +22,12 @@
 #      Переименуешь эти имена здесь или в webui.sh — лаунчер молча
 #      откатится на дефолт 8787.
 #
-#   2. docker-cmd.sh (build_docker_run_cmd) читает наши глобальные
-#      переменные WEBUI_MODE / WEBUI_PORT / WEBUI_HOST_PORT — по ним
-#      добавляет в docker run проброс порта, -e-переменные из п.1 и
-#      подменяет команду контейнера на «webui». Переименуешь их здесь —
-#      docker-cmd.sh увидит пустые значения и запустит обычный TUI.
+#   2. launch_container (cmd-run.sh) и build_docker_run_cmd (docker-cmd.sh)
+#      читают наши локальные WEBUI_MODE / WEBUI_PORT / WEBUI_HOST_PORT через
+#      динамическую область видимости — по ним добавляются в docker run
+#      проброс порта, -e-переменные из п.1 и подменяется команда контейнера
+#      на «webui». Переименуешь их здесь — callee увидит пустые значения и
+#      запустит обычный TUI.
 #
 #   3. launch_container (cmd-run.sh) выполняет запуск за нас. Договорённость
 #      по именам: webui-контейнер зовётся pibox-<env>-webui (суффикс
@@ -35,9 +36,9 @@
 #      старого контейнера (docker rm -f) убило бы TUI-сессию.
 
 cmd_webui() {
-    local -a PI_ARGS=()
     local -a PUBLISH_OPTS=()
     local -a PASS_ENV_OPTS=()
+    local -a COMMON_TAIL=()
 
     local ENV_NAME=""
     local CONTAINER_NAME=""
@@ -50,72 +51,23 @@ cmd_webui() {
     local KEEP="0"
     local PORT=""
 
-    while [[ $# -gt 0 ]]; do
-        case "$1" in
-        --)
-            shift
-            # В webui-режиме аргументы pi не передаются (команда контейнера —
-            # лаунчер webui); допускаем «--» только с пустым хвостом, чтобы
-            # явный `pibox webui -- что-то` не молчал, а объяснял.
-            if [[ $# -gt 0 ]]; then
-                die "pibox webui не принимает аргументы pi после '--': $*. Передайте их обычному запуску 'pibox -- …'"
-            fi
-            break
-            ;;
-        -e | --env | -p | --publish | -E | --pass-env | --env-file | \
-            --memory | --cpus | --pids-limit | --name)
-            [[ $# -ge 2 ]] || die "Опция $1 требует аргумент"
-            case "$1" in
-            -e | --env) ENV_NAME="$2" ;;
-            -p | --publish) PUBLISH_OPTS+=("$2") ;;
-            -E | --pass-env) PASS_ENV_OPTS+=("$2") ;;
-            --env-file) ENV_FILE="$2" ;;
-            --memory) MEMORY="$2" ;;
-            --cpus) CPUS="$2" ;;
-            --pids-limit) PIDS_LIMIT="$2" ;;
-            --name) CONTAINER_NAME="$2" ;;
-            esac
-            shift 2
-            ;;
-        --port)
-            [[ $# -ge 2 ]] || die "Опция $1 требует аргумент"
-            PORT="$2"
-            shift 2
-            ;;
-        --git-safe)
-            GIT_SAFE=1
-            shift
-            ;;
-        --keep)
-            KEEP=1
-            shift
-            ;;
-        --dry-run)
-            DRY_RUN=1
-            shift
-            ;;
-        -h | --help)
-            usage
-            exit 0
-            ;;
-        -V | --version)
-            version
-            exit 0
-            ;;
-        *)
-            err "Неизвестная опция или аргумент для webui: $1"
-            usage
-            exit 1
-            ;;
-        esac
-    done
+    if ! parse_common_run_opts webui "$@"; then
+        # В webui-режиме аргументы pi не передаются (команда контейнера —
+        # лаунчер webui); «--» допускаем только с пустым хвостом, чтобы
+        # явный `pibox webui -- что-то` не молчал, а объяснял.
+        if [[ ${#COMMON_TAIL[@]} -gt 0 ]]; then
+            die "pibox webui не принимает аргументы pi после '--': ${COMMON_TAIL[*]}. Передайте их обычному запуску 'pibox -- …'"
+        fi
+    fi
 
-    # Режим для docker-cmd.sh: проброс порта + команда контейнера `webui`.
+    # Режим webui — локальные, launch_container/build_docker_run_cmd видят
+    # их через динамическую область видимости. Проброс порта + команда
+    # контейнера `webui`.
     # Дефолт контейнерного порта — 8787 (совпадает с дефолтом pi-web-ui);
     # --port меняет ОБА конца маппинга (host:container). Своё -p остаётся
     # доступным для остальных портов; конфликтующий маппинг не дублируем.
-    WEBUI_MODE=1
-    WEBUI_PORT="${PORT:-8787}"
+    local WEBUI_MODE=1
+    local WEBUI_PORT="${PORT:-8787}"
     [[ "$WEBUI_PORT" =~ ^[0-9]+$ ]] || die "--port: '$WEBUI_PORT' — ожидается номер порта"
     ((WEBUI_PORT >= 1 && WEBUI_PORT <= 65535)) || die "--port: '$WEBUI_PORT' вне диапазона 1–65535"
 
@@ -124,7 +76,7 @@ cmd_webui() {
     # на другой хост-порт (-p 9999:8787, -p 127.0.0.1:9999:8787), ссылка
     # должна показывать его. Рассматриваем только маппинги НА контейнерный
     # порт webui.
-    WEBUI_HOST_PORT="$WEBUI_PORT"
+    local WEBUI_HOST_PORT="$WEBUI_PORT"
     local opt
     for opt in ${PUBLISH_OPTS[@]+"${PUBLISH_OPTS[@]}"}; do
         # формат [host_ip:]host_port:container_port[/proto]

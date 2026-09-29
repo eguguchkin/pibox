@@ -746,7 +746,9 @@ if command -v jq >/dev/null 2>&1; then
     # отсутствие пакета (берём реальное имя из манифеста — не то, что уже
     # удалялось в ранних проверках: расширения типа pi-lens по пути
     # проверяются в D9-дрейфе выше)
-    manifest_first="$(grep -m1 '^npm:' "$TEST_PIBOX/template/extensions.txt")"
+    # Только UNSCOPED-пакет: для scoped (npm:@scope/pkg@ver) «имя до @» —
+    # пустая строка, и rm -rf ниже снесёт весь каталог теста.
+    manifest_first="$(grep -m1 '^npm:[^@]' "$TEST_PIBOX/template/extensions.txt")"
     manifest_first="${manifest_first#npm:}"
     manifest_first="${manifest_first%%@*}" # имя до @ (обязательно в манифесте)
     rm -rf "${DN9:?}/$manifest_first"

@@ -24,6 +24,40 @@
 # Расхождения с манифестом — не ошибки: свежее окружение без расширений —
 # нормальное состояние (doctor не должен падать с кодом 1).
 # $1 — имя окружения, $2 — каталог окружения, $3 — 1, если окружения нет.
+
+# D10: дрейф содержимого продуктового слоя (common).
+# D5 проверяет НАЛИЧИЕ каркаса; здесь — СОДЕРЖИМОЕ: файл есть в env, но его
+# версия расходится с template/common (после обновления pibox каркас устарел).
+# Файлы, перекрытые слоем user, пропускаем — их дрейф покрывает layers_drift (D5).
+# Отсутствующие файлы — зона D5. Не ошибка: устаревший каркас — повод обновить
+# (pibox env upgrade), не поломка. $1 — каталог окружения, $2 — каталог user-слоя,
+# $3 — 1, если окружения нет.
+doctor_check_common_drift() {
+    local env_dir="$1" user_dir="$2" env_ok="$3"
+    [[ "$env_ok" == "0" ]] || return 0   # окружения нет — D4/D5 уже сообщили
+    local template_dir="$PIBOX_DIR/template/common"
+    [[ -d "$template_dir" ]] || return 0
+    local rel src dst stale=0
+    while IFS= read -r src; do
+        rel="${src#"$template_dir"/}"
+        if [[ -f "$user_dir/$rel" ]]; then
+            continue   # перекрыт user — покрывает layers_drift
+        fi
+        dst="$env_dir/$rel"
+        if [[ ! -e "$dst" ]]; then
+            continue   # отсутствие — зона D5
+        fi
+        if ! cmp -s "$src" "$dst"; then
+            stale=$((stale + 1))
+        fi
+    done < <(find "$template_dir" -type f 2>/dev/null)
+    if [[ "$stale" -eq 0 ]]; then
+        d_ok "продуктовый слой (common): содержимое в актуальном состоянии"
+    else
+        d_warn "common: $stale файл(ов) устарели (env ≠ template/common) — обновление: pibox env upgrade"
+    fi
+}
+
 doctor_check_manifest() {
     local env_name="$1" env_dir="$2" env_ok="$3"
 
@@ -449,6 +483,9 @@ cmd_doctor() {
 
     # D9: сверка расширений с манифестом (отдельная функция — выше)
     doctor_check_manifest "$env_name" "$env_dir" "$env_ok"
+
+    # D10: дрейф содержимого продуктового слоя (common)
+    doctor_check_common_drift "$env_dir" "$PIBOX_DIR/template/user" "$env_ok"
 
     # Итог
     printf '\n'

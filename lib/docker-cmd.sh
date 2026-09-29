@@ -4,23 +4,23 @@
 # Глобальный массив, в который собирается готовая команда docker run.
 RUN_CMD=()
 
-# Глобальный флаг режима `pibox webui` (1 = включён) и параметры порта.
-# Двусторонний контракт с lib/cmd-webui.sh: ТАМ cmd_webui выставляет эти
-# переменные ДО вызова launch_container; ЗДЕСЬ (build_docker_run_cmd) по ним
+# Режим webui (WEBUI_MODE / WEBUI_PORT / WEBUI_HOST_PORT) — НЕ глобальные
+# переменные. Каждый вход (cmd_run, cmd_webui) объявляет их локально, а
+# launch_container и build_docker_run_cmd видят их через динамическую
+# область видимости — тот же контракт, что для ENV_NAME/MEMORY/PI_ARGS.
+# cmd_run объявляет WEBUI_MODE=0 (обычный TUI); cmd_webui — WEBUI_MODE=1
+# и порты. Состояние не остаётся между вызовами. По этим переменным здесь
 # добавляется проброс webui-порта, -e PI_WEB_PORT/WEBUI_HOST_PORT для
 # лаунчера внутри контейнера (см. его контракт в docker/webui.sh) и команда
-# контейнера «webui». Переименуешь переменную в одном из двух файлов —
-# вторая молча увидит пустую и запустит обычный TUI без порта.
-WEBUI_MODE=0
-WEBUI_PORT=8787
-WEBUI_HOST_PORT=""
+# контейнера «webui».
 
 # Заполняет RUN_CMD аргументами для docker run.
 # Переменные берутся динамически: функция вызывается из launch_container
 # (cmd-run.sh), а bash даёт ей видеть локальные переменные вызывающей
 # функции (динамическая область видимости): ENV_NAME, CONTAINER_NAME,
 # MEMORY, CPUS, PIDS_LIMIT, GIT_SAFE, ENV_FILE, массивы PUBLISH_OPTS,
-# PASS_ENV_OPTS, PI_ARGS; глобальные IMAGE_NAME, WEBUI_MODE/PORT/HOST_PORT.
+# PASS_ENV_OPTS, PI_ARGS; WEBUI_MODE/PORT/HOST_PORT — локальные точки входа
+# (cmd_run/cmd_webui); глобальный IMAGE_NAME.
 build_docker_run_cmd() {
     RUN_CMD=(
         "docker" "run"
@@ -62,7 +62,7 @@ build_docker_run_cmd() {
     # Режим pibox webui: сервер внутри слушает PI_WEB_PORT (лаунчер webui.sh);
     # WEBUI_HOST_PORT — для зелёной ссылки. Авто -p добавляем, только если
     # юзер не пробросил свой маппинг на контейнерный порт webui.
-    if [[ "$WEBUI_MODE" == "1" ]]; then
+    if [[ "${WEBUI_MODE:-0}" == "1" ]]; then
         local hp="${WEBUI_HOST_PORT:-$WEBUI_PORT}"
         local mapped=""
         for opt in ${PUBLISH_OPTS[@]+"${PUBLISH_OPTS[@]}"}; do
@@ -98,7 +98,7 @@ build_docker_run_cmd() {
     # Образ и команда
     RUN_CMD+=("$IMAGE_NAME")
 
-    if [[ "$WEBUI_MODE" == "1" ]]; then
+    if [[ "${WEBUI_MODE:-0}" == "1" ]]; then
         # Лаунчер вместо дефолтного pi: зелёная ссылка + exec pi-web-ui
         RUN_CMD+=("webui")
     else

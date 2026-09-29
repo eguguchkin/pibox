@@ -17,12 +17,25 @@
 #     манифеста (без дублей) — это включает загрузку расширений в pi.
 cmd_extensions() {
     local subcmd="${1:-}"
-    [[ "$subcmd" == "install" ]] || {
-        err "использование: pibox extensions install [-e ИМЯ]"
+    case "$subcmd" in
+    install)
+        shift
+        cmd_extensions_install "$@"
+        ;;
+    list)
+        shift
+        cmd_extensions_list "$@"
+        ;;
+    *)
+        err "использование: pibox extensions install|list [-e ИМЯ]"
         exit 1
-    }
-    shift
+        ;;
+    esac
+}
 
+# --- install ----------------------------------------------------------------
+
+cmd_extensions_install() {
     local env_name="$DEFAULT_ENV"
     while [[ $# -gt 0 ]]; do
         case "$1" in
@@ -288,4 +301,103 @@ cmd_extensions() {
         die "есть ошибки установки — повторите: pibox extensions install -e $env_name"
     fi
     log "Расширения подключатся при следующем запуске pi в окружении '$env_name'"
+}
+
+# --- list -------------------------------------------------------------------
+# Отчёт (только чтение, docker не нужен): манифест vs окружение.
+# Версия — из node_modules окружения (тот же путь, что в install),
+# подключённость — из settings.json. Ручные расширения (поставлены в
+# окружении вручную, нет в манифесте) выводятся отдельным разделом.
+cmd_extensions_list() {
+    local env_name="$DEFAULT_ENV"
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+        -e | --env)
+            [[ $# -ge 2 ]] || die "Опция $1 требует аргумент"
+            env_name="$2"
+            shift 2
+            ;;
+        -h | --help)
+            usage
+            exit 0
+            ;;
+        *)
+            err "Неизвестная опция для extensions list: $1"
+            usage
+            exit 1
+            ;;
+        esac
+    done
+
+    validate_env_name "$env_name"
+    local env_dir="$PIBOX_DIR/env/$env_name"
+    if [[ ! -d "$env_dir" ]]; then
+        die "окружение '$env_name' не найдено — создайте: pibox env create $env_name"
+    fi
+
+    local nm="$env_dir/.pi/agent/npm/node_modules"
+    local settings="$env_dir/.pi/agent/settings.json"
+    load_extensions_manifest
+    load_settings_packages "$settings"
+
+    # Есть ли npm:<имя> в settings.json окружения (подключено в pi)
+    settings_has() {
+        local p="$1" x
+        for x in ${EXT_SETTINGS_PACKAGES[@]+"${EXT_SETTINGS_PACKAGES[@]}"}; do
+            [[ "$x" == "npm:$p" || "$x" == "npm:$p@"* ]] && return 0
+        done
+        return 1
+    }
+
+    printf 'Расширения окружения %s\n' "'$env_name'" >&2
+    local entry have status
+    if [[ ${#EXT_ENTRIES[@]} -eq 0 ]]; then
+        warn "манифест пуст или отсутствует: $PIBOX_DIR/$EXTENSIONS_FILE"
+    else
+        printf '%-36s %-10s %-12s %s\n' "пакет" "манифест" "установлен" "состояние"
+        for entry in ${EXT_ENTRIES[@]+"${EXT_ENTRIES[@]}"}; do
+            if ! parse_ext_entry "$entry"; then
+                warn "не могу разобрать запись манифеста: $entry"
+                continue
+            fi
+            have="$(get_installed_ext_version "$nm" "$EXT_NAME")"
+            if [[ "$have" == "$EXT_VER" ]]; then
+                status="актуален"
+            elif [[ -n "$have" ]]; then
+                status="устарел (ждём $EXT_VER)"
+            else
+                status="не установлен"
+            fi
+            if ! settings_has "$EXT_NAME"; then
+                status="$status, не подключён"
+            fi
+            printf '%-36s %-10s %-12s %s\n' "$EXT_NAME" "$EXT_VER" "${have:--}" "$status"
+        done
+    fi
+
+    # Ручные: в settings.json, но не в манифесте
+    local -a manual=()
+    local p bare known e
+    for p in ${EXT_SETTINGS_PACKAGES[@]+"${EXT_SETTINGS_PACKAGES[@]}"}; do
+        [[ "$p" == npm:* ]] || continue
+        bare="${p#npm:}" # в settings.json версия не хранится ("npm:имя")
+        known=0
+        for e in ${EXT_ENTRIES[@]+"${EXT_ENTRIES[@]}"}; do
+            parse_ext_entry "$e" || continue
+            if [[ "$EXT_NAME" == "$bare" ]]; then
+                known=1
+                break
+            fi
+        done
+        [[ "$known" == "1" ]] || manual+=("$bare")
+    done
+    if [[ ${#manual[@]} -gt 0 ]]; then
+        local m mh
+        printf '\nРучные (не в манифесте):\n'
+        for m in "${manual[@]}"; do
+            mh="$(get_installed_ext_version "$nm" "$m")"
+            printf '  %-34s %s\n' "$m" "${mh:+установлен $mh}"
+        done
+    fi
+    return 0
 }
