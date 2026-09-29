@@ -1,19 +1,33 @@
 {
   "providers": {
-    "local": {
+    "providerID": {
       "name": "Local Model API",
       "baseUrl": "http://host.docker.internal:8080/v1",
-      "type": "openai",
+      "api": "openai-completions",
       "apiKey": "REPLACE_ME",
       "models": [
         {
-          "id": "local-model",
-          "name": "Local Model",
-          "maxTokens": 4096
+          "id": "modelID",
+          "name": "Model Name",
+          "maxTokens": 4096,
+          "contextWindow": 40960,
+          "reasoning": true,
+          "input": ["text", "image"],
+          "compat": {
+            "supportsReasoningEffort": true
+          },
+          "thinkingLevelMap": {
+            "minimal": "minimal",
+            "low": "low",
+            "medium": "medium",
+            "high": "high",
+            "xhigh": "xhigh",
+            "max": "max"
+          }
         }
       ]
-    }
-  },
-  "defaultProvider": "local",
-  "defaultModel": "local-model"
+    },
+    "defaultProvider": "providerID",
+    "defaultModel": "modelID"
+  }
 }
