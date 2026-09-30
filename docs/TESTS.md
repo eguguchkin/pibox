@@ -15,7 +15,7 @@
 обращается — работают с файлами и CLI. Для них есть режим `--no-docker`:
 
 ```bash
-./tests/smoke.sh --no-docker     # ~136 проверок, ~20 с; docker-фазы — SKIP
+./tests/smoke.sh --no-docker     # ~150 проверок, ~20 с; docker-фазы — SKIP
 ```
 
 Что происходит: в начало `PATH` подставляется заглушка
@@ -31,7 +31,7 @@
 | 0 (P0) | требования: bash, версии | PASS |
 | 1 (I1–I6) | install.sh: установка, структура, повторная, --force, слои | PASS |
 | 2 (B0–B6) | docker build + содержимое образа | SKIP |
-| 3 (C1–C27) | CLI dry-run, env, user push/pull, doctor D1-D9, манифест расширений, изоляция | PASS |
+| 3 (C1–C33) | CLI dry-run (run/webui/tg), env, user push/pull, doctor D1-D9, манифест расширений, изоляция | PASS |
 | 4 (R1–R20) | runtime контейнера: UID/GID, skel-merge, .npmrc, сеть, caps, лимиты, порты, webui | SKIP |
 
 Причины, по которым фазы 2 и 4 принципиально не эмулируются: они проверяют

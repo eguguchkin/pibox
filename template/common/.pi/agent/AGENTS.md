@@ -45,6 +45,13 @@
   с хоста (`pibox webui`, по умолчанию порт 8787); сессии и модели общие с
   TUI. Веб-интерфейс — единственное место, где тебе доступен показ картинок
   (скилл show-image).
+- Telegram-мост (pi-telegram-bridge, `pibox tg`) вшит в образ: задания и
+  отчёты через бота (@llblab/pi-telegram). Токен — в
+  `~/.pi/agent/telegram.json` (user-слой). Если api.telegram.org закрыт
+  провайдером, запросы к Telegram автоматом идут через SOCKS5-прокси —
+  переменная PIBOX_TELEGRAM_PROXY (socks5h://user:pass@host:port),
+  управляет пользователь. Твои ответы в этот чат стримятся мостом сам;
+  файлы для отправки — инструмент telegram_attach.
 
 ## Git
 

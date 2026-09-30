@@ -98,6 +98,7 @@ pibox
 | --- | --- |
 | `pibox [run] [ОПЦИИ] [--] [PI_ARGS…]` | Запуск агента в TUI (run — по умолчанию) |
 | `pibox webui [ОПЦИИ] [--port N]` | Агент с браузерным UI ([pi-web-ui](https://github.com/xing-shuyin/pi-web-ui), вшит в образ): пробрасывает порт (по умолчанию `8787:8787`), сам открывает страницу в браузере (готовность порта ждёт фоновый waiter; `--no-open` отключает), печатает зелёную ссылку, дальше в консоль идут логи агента; Ctrl+C — остановка. Опции как у run (`-e`, `-p`, `-E`, `--memory`, …); `--port N` — другой порт (хост и контейнер) |
+| `pibox tg [ОПЦИИ]` | Контейнер в режиме Telegram-моста (`@llblab/pi-telegram`, вшит в образ): RPC-демон pi без TUI, задания и отчёты через бота; порт не публикуется (мост ходит наружу). Нужен токен в `template/user/.pi/agent/telegram.json` (user-слой). Сеть режет провайдер — запустите с `PIBOX_TELEGRAM_PROXY='socks5h://user:pass@host:port'` (пробрасывается автоматически). Опции как у run, кроме аргументов pi; Ctrl+C — остановка |
 | `pibox build [--no-cache]` | Сборка Docker-образа |
 | `pibox env list` | Список окружений |
 | `pibox env create ИМЯ` | Создать окружение из шаблона |
@@ -312,8 +313,10 @@ php -v; go version           # переживают перезапуск кон�
 pibox/
 ├── docker/             # build-контекст (копируется install.sh в $PIBOX_DIR/docker)
 │   ├── Dockerfile      # multi-stage: ubuntu 24.04 + node 24 + pi + pi-web-ui + mise
-│   ├── entrypoint.sh   # UID/GID, dotfiles-слои, gosu→tini→CMD (pi | webui)
+│   ├── entrypoint.sh   # UID/GID, dotfiles-слои, gosu→tini→CMD (pi | webui | pi-telegram-bridge run)
 │   ├── webui.sh        # лаунчер web-ui в контейнере (→ /usr/local/bin/webui)
+│   ├── pi-telegram-bridge.sh  # RPC-демон pi + Telegram-мост (→ /usr/local/bin/pi-telegram-bridge)
+│   ├── telegram-socks-preload.cjs  # SOCKS5-прокси для Telegram (PIBOX_TELEGRAM_PROXY)
 │   └── .dockerignore   # контекст = только файлы сборки
 ├── bin/
 │   └── pibox           # точка входа CLI: source lib/* → main
@@ -321,9 +324,10 @@ pibox/
 │   ├── common.sh       # константы, хелперы вывода, usage, проверки
 │   ├── env.sh          # окружения: create (слой 1+2)/list
 │   ├── layers.sh       # слои шаблона: apply_user_layer/push/pull
-│   ├── docker-cmd.sh   # сборка docker run команды (+webui-режим)
+│   ├── docker-cmd.sh   # сборка docker run команды (+webui/tg-режимы)
 │   ├── cmd-run.sh      # pibox run + общее ядро launch_container
 │   ├── cmd-webui.sh    # pibox webui
+│   ├── cmd-tg.sh       # pibox tg (переиспользует launch_container)
 │   ├── cmd-build.sh    # pibox build
 │   ├── cmd-env.sh      # pibox env / pibox shell
 │   ├── cmd-user.sh     # pibox user push/pull
@@ -344,7 +348,9 @@ pibox/
 │   ├── smoke.sh        # >100 автопроверок: install→build→CLI→runtime
 │   └── helpers.sh      # счётчики, expect_*, docker_pibox, очистка
 ├── docs/
-│   └── PROJECT.md      # описание проекта, контракты, подводные камни
+│   ├── PROJECT.md      # описание проекта, контракты, подводные камни
+│   ├── TESTS.md        # как тестировать pibox
+│   └── LAYERS.md       # дизайн двухслойного шаблона
 └── .github/workflows/ci.yml  # shellcheck + exec-биты + docker build
 ```
 
@@ -357,8 +363,8 @@ pibox/
 ./tests/smoke.sh --rebuild    # пересобрать образ
 PIBOX_IMAGE=pibox:test ./tests/smoke.sh
 
-shellcheck install.sh docker/entrypoint.sh docker/webui.sh bin/pibox lib/*.sh tests/smoke.sh tests/helpers.sh   # как в CI
-shfmt -d -i 4 install.sh docker/entrypoint.sh docker/webui.sh bin/pibox lib/*.sh tests/smoke.sh tests/helpers.sh  # стиль: 4 пробела, не табы
+shellcheck install.sh docker/entrypoint.sh docker/webui.sh docker/pi-telegram-bridge.sh bin/pibox lib/*.sh tests/smoke.sh tests/helpers.sh   # как в CI
+shfmt -d -i 4 install.sh docker/entrypoint.sh docker/webui.sh docker/pi-telegram-bridge.sh bin/pibox lib/*.sh tests/smoke.sh tests/helpers.sh  # стиль: 4 пробела, не табы
 ```
 
 ### Обновление версий

@@ -9,8 +9,8 @@
 ## Быстрые факты
 
 - PIBOX — запуск Pi Coding Agent в изолированном Docker-контейнере с персистентными окружениями.
-- Основные файлы: `docker/` (build-контекст: `Dockerfile` — pi + pi-web-ui в /usr/local, `entrypoint.sh`, `webui.sh` — лаунчер web-ui, `.dockerignore`), `bin/pibox` + `lib/` (CLI), `install.sh`, `template/` (двухслойный шаблон: `common` — продукт, `user` — личные инварианты).
-- Проверки: `./tests/smoke.sh` (полный — на хосте с docker; внутри контейнера — `./tests/smoke.sh --no-docker`, см. [docs/TESTS.md](docs/TESTS.md)) и `shellcheck install.sh docker/entrypoint.sh docker/webui.sh bin/pibox lib/*.sh tests/*.sh`.
+- Основные файлы: `docker/` (build-контекст: `Dockerfile` — pi + pi-web-ui в /usr/local, `entrypoint.sh`, `webui.sh` — лаунчер web-ui, `pi-telegram-bridge.sh` + `telegram-socks-preload.cjs` — Telegram-мост (`pibox tg`), `.dockerignore`), `bin/pibox` + `lib/` (CLI), `install.sh`, `template/` (двухслойный шаблон: `common` — продукт, `user` — личные инварианты).
+- Проверки: `./tests/smoke.sh` (полный — на хосте с docker; внутри контейнера — `./tests/smoke.sh --no-docker`, см. [docs/TESTS.md](docs/TESTS.md)) и `shellcheck install.sh docker/entrypoint.sh docker/webui.sh docker/pi-telegram-bridge.sh bin/pibox lib/*.sh tests/*.sh`.
 - Скрипты — bash, только LF-окончания.
 
 ## Соглашения по коду
