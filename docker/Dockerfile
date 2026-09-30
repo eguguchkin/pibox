@@ -162,6 +162,21 @@ COPY --from=builder /usr/local/ /usr/local/
 #   строку со ссылкой, затем exec pi-web-ui); полный контракт — в webui.sh
 COPY --chmod=755 webui.sh /usr/local/bin/webui
 
+# — мост Telegram: RPC-демон pi с автоподключением расширения
+#   @llblab/pi-telegram (задания/отчёты через бота); стартует из entrypoint
+#   при настроенном ~/.pi/agent/telegram.json, полный контракт — в скрипте
+COPY --chmod=755 pi-telegram-bridge.sh /usr/local/bin/pi-telegram-bridge
+
+# — SOCKS5-прокси для Telegram (опция pibox tg + PIBOX_TELEGRAM_PROXY):
+#   preload перехватывает https-запросы к *.telegram.org внутри процесса pi
+#   (llblab ходит через сырой https.request мимо HTTP(S)_PROXY); агент —
+#   чистый JS, версия запинена
+RUN set -eux; \
+    npm install --prefix /usr/local/lib/pi-socks \
+        socks-proxy-agent@8.0.5 --omit=dev; \
+    rm -rf /usr/local/lib/pi-socks/package-lock.json
+COPY telegram-socks-preload.cjs /usr/local/lib/pi-telegram/socks-preload.cjs
+
 # --- mise: глобальный бинарник ---
 # Используем официальный установщик с MISE_INSTALL_PATH
 # (НЕ через mise.run без env — тот пишет в ~/.local/bin)

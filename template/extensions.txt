@@ -24,3 +24,4 @@ npm:pi-docparser@4.0.0                   # понимание документо
 npm:pi-open-tui@0.3.8                    # оформленная TUI: анимированная шапка, футер, редактор с метаданными модели
 npm:pi-multimodal-proxy@1.18.1           # автогендерация описаний изображений/видео/аудио для любой модели через мультимодальную
 npm:@bytetrue/pi-image-gen@0.4.0         # генерация изображений: конфиг TUI + Skill/CLI по требованию
+npm:@llblab/pi-telegram@0.51.6           # Telegram-мост: задания и отчёты через бота; демон pi-telegram-bridge (RPC, автостарт из entrypoint при настроенном telegram.json)

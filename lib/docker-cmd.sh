@@ -4,15 +4,16 @@
 # Глобальный массив, в который собирается готовая команда docker run.
 RUN_CMD=()
 
-# Режим webui (WEBUI_MODE / WEBUI_PORT / WEBUI_HOST_PORT) — НЕ глобальные
-# переменные. Каждый вход (cmd_run, cmd_webui) объявляет их локально, а
-# launch_container и build_docker_run_cmd видят их через динамическую
-# область видимости — тот же контракт, что для ENV_NAME/MEMORY/PI_ARGS.
-# cmd_run объявляет WEBUI_MODE=0 (обычный TUI); cmd_webui — WEBUI_MODE=1
-# и порты. Состояние не остаётся между вызовами. По этим переменным здесь
-# добавляется проброс webui-порта, -e PI_WEB_PORT/WEBUI_HOST_PORT для
-# лаунчера внутри контейнера (см. его контракт в docker/webui.sh) и команда
-# контейнера «webui».
+# Режимы webui и tg (WEBUI_MODE/WEBUI_PORT/WEBUI_HOST_PORT, TG_MODE) — НЕ
+# глобальные переменные. Каждый вход (cmd_run, cmd_webui, cmd-tg) объявляет
+# их локально, а launch_container и build_docker_run_cmd видят их через
+# динамическую область видимости — тот же контракт, что для ENV_NAME/
+# MEMORY/PI_ARGS. cmd_run объявляет WEBUI_MODE=0, TG_MODE=0 (обычный TUI);
+# cmd_webui — WEBUI_MODE=1 и порты; cmd-tg — TG_MODE=1. Состояние не
+# остаётся между вызовами. По этим переменным здесь добавляется проброс
+# webui-порта, -e PI_WEB_PORT/WEBUI_HOST_PORT для лаунчера внутри контейнера
+# (см. его контракт в docker/webui.sh) или команда контейнера «webui» /
+# «pi-telegram-bridge run».
 
 # Заполняет RUN_CMD аргументами для docker run.
 # Переменные берутся динамически: функция вызывается из launch_container
@@ -95,12 +96,24 @@ build_docker_run_cmd() {
         RUN_CMD+=("-i")
     fi
 
+    # tg: SOCKS5-прокси для Telegram (хост-переменная → контейнер).
+    # llblab ходит в Telegram мимо HTTP(S)_PROXY (сырой https.request),
+    # прокси понимает только наш preload внутри pi-telegram-bridge.
+    if [[ "${TG_MODE:-0}" == "1" && -n "${PIBOX_TELEGRAM_PROXY:-}" ]]; then
+        RUN_CMD+=("-e" "PIBOX_TELEGRAM_PROXY=${PIBOX_TELEGRAM_PROXY}")
+    fi
+
     # Образ и команда
     RUN_CMD+=("$IMAGE_NAME")
 
     if [[ "${WEBUI_MODE:-0}" == "1" ]]; then
         # Лаунчер вместо дефолтного pi: зелёная ссылка + exec pi-web-ui
         RUN_CMD+=("webui")
+    elif [[ "${TG_MODE:-0}" == "1" ]]; then
+        # Мост Telegram вместо дефолтного pi: RPC-демон + /telegram-connect
+        # (foreground; TERM/INT = остановка). Аргументы pi не пробрасываются —
+        # их задаёт сам мост (--mode rpc --continue).
+        RUN_CMD+=("pi-telegram-bridge" "run")
     else
         # Аргументы pi (после --)
         for opt in ${PI_ARGS[@]+"${PI_ARGS[@]}"}; do

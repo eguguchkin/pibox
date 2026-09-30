@@ -1,9 +1,11 @@
 # Build-контекст минимален: для сборки образа нужны только Dockerfile,
-# entrypoint.sh и webui.sh (лаунчер web-ui). CLI, установщик, шаблоны, тесты
-# и документация в образ не попадают (после install.sh контекст живёт в
-# PIBOX_DIR/docker/).
+# entrypoint.sh, webui.sh (лаунчер web-ui) и pi-telegram-bridge.sh (мост
+# Telegram). CLI, установщик, шаблоны, тесты и документация в образ не
+# попадают (после install.sh контекст живёт в PIBOX_DIR/docker/).
 *
 !Dockerfile
 !entrypoint.sh
 !webui.sh
+!pi-telegram-bridge.sh
+!telegram-socks-preload.cjs
 !.dockerignore

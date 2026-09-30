@@ -507,6 +507,56 @@ else
     ok "C24: webui -- extra отклонён"
 fi
 
+# C30: tg dry-run — команда контейнера pi-telegram-bridge run, отдельное имя
+DRYT=""
+if DRYT="$(cd "$TEST_WS" && "$BIN" tg --dry-run 2>/dev/null)"; then
+    ok "C30: pibox tg --dry-run"
+else
+    fail "C30: pibox tg --dry-run завершился с ошибкой"
+fi
+expect_contains "C30: команда контейнера — pi-telegram-bridge run" "$DRYT" "$IMAGE pi-telegram-bridge run"
+expect_contains "C30: tg-контейнер — отдельное имя (не убивает TUI/webui)" "$DRYT" "--name pibox-default-tg"
+if printf '%s' "$DRYT" | grep -qE -- '-p 8787|--name pibox-default-tg-webui'; then
+    fail "C30: tg не должен публиковать порты webui"
+else
+    ok "C30: портов нет — мост ходит только наружу"
+fi
+
+# C31: tg не принимает аргументы pi после --
+if (cd "$TEST_WS" && "$BIN" tg --dry-run -- extra 2>/dev/null); then
+    fail "C31: tg -- extra должен отклоняться"
+else
+    ok "C31: tg -- extra отклонён"
+fi
+
+# C32: run не должен попасть в tg-режим после cmd_tg (динамическая область)
+DRYT2=""
+if DRYT2="$(cd "$TEST_WS" && "$BIN" tg --dry-run -e smoke-env 2>/dev/null)" && DRYT3="$(cd "$TEST_WS" && "$BIN" run --dry-run -e smoke-env 2>/dev/null)"; then
+    ok "C32: tg и run --dry-run"
+else
+    fail "C32: tg/run --dry-run завершились с ошибкой"
+fi
+expect_contains "C32: tg — команда моста" "$DRYT2" "pi-telegram-bridge run"
+expect_contains "C32: имя tg-контейнера для smoke-env" "$DRYT2" "--name pibox-smoke-env-tg"
+
+# C33: PIBOX_TELEGRAM_PROXY (хост-переменная) пробрасывается в tg-контейнер
+if DRYT4="$(cd "$TEST_WS" && PIBOX_TELEGRAM_PROXY='socks5h://u:p@1.2.3.4:1080' "$BIN" tg --dry-run -e smoke-env 2>/dev/null)"; then
+    ok "C33: tg --dry-run с прокси"
+else
+    fail "C33: tg --dry-run с прокси завершился с ошибкой"
+fi
+expect_contains "C33: прокси передан -e" "$DRYT4" "PIBOX_TELEGRAM_PROXY=socks5h://u:p@1.2.3.4:1080"
+if DRYT5="$(cd "$TEST_WS" && "$BIN" tg --dry-run -e smoke-env 2>/dev/null)" && printf '%s' "$DRYT5" | grep -qF -- 'PIBOX_TELEGRAM_PROXY='; then
+    fail "C33: без переменной -e PIBOX_TELEGRAM_PROXY не должен добавляться"
+else
+    ok "C33: без переменной прокси не пробрасывается"
+fi
+if printf '%s' "$DRYT3" | grep -qF -- 'pi-telegram-bridge'; then
+    fail "C32: run после tg не должен наследовать TG_MODE"
+else
+    ok "C32: TG_MODE не протекает между вызовами"
+fi
+
 # C25/C26: webui dry-run — печатает хост-порт и PI_WEB_TOKEN пробрасывается -e
 # (ссылку печатает лаунчер webui.sh в контейнере, CLI лишь передаёт порт)
 DRYW4=""

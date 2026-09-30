@@ -17,11 +17,12 @@ cmd_run() {
     local GIT_SAFE=""
     local DRY_RUN="0"
     local KEEP="0"
-    # Режим webui: run = обычный TUI. launch_container и build_docker_run_cmd
+    # Режимы webui/tg: run = обычный TUI. launch_container и build_docker_run_cmd
     # читают эти локальные через динамическую область видимости (docker-cmd.sh).
     local WEBUI_MODE=0
     local WEBUI_PORT=8787
     local WEBUI_HOST_PORT=""
+    local TG_MODE=0
 
     if ! parse_common_run_opts run "$@"; then
         # `--`: хвост (включая флаги) уходит в pi
@@ -141,10 +142,12 @@ launch_container() {
     ENV_NAME="${ENV_NAME:-$DEFAULT_ENV}"
     if [[ -z "$CONTAINER_NAME" ]]; then
         CONTAINER_NAME="pibox-${ENV_NAME}"
-        # webui — в отдельном контейнере: иначе `pibox webui` при запущенном
-        # TUI-экземпляре делает docker rm -f и убивает его (exit 137). pi
-        # рассчитан на параллельные сессии (общий ~/.pi/agent/sessions).
+        # webui/tg — в отдельных контейнерах: иначе `pibox webui`/`pibox tg`
+        # при запущенном TUI-экземпляре делает docker rm -f и убивает его
+        # (exit 137). pi рассчитан на параллельные сессии (общий
+        # ~/.pi/agent/sessions).
         [[ "${WEBUI_MODE:-0}" == "1" ]] && CONTAINER_NAME+="-webui"
+        [[ "${TG_MODE:-0}" == "1" ]] && CONTAINER_NAME+="-tg"
     fi
 
     # Проверки
@@ -191,6 +194,8 @@ launch_container() {
 
     if [[ "${WEBUI_MODE:-0}" == "1" ]]; then
         log "Запуск web-ui (pi-web-ui) в окружении '$ENV_NAME' (контейнер: $CONTAINER_NAME)..."
+    elif [[ "${TG_MODE:-0}" == "1" ]]; then
+        log "Запуск Telegram-моста в окружении '$ENV_NAME' (контейнер: $CONTAINER_NAME)..."
     else
         log "Запуск pi в окружении '$ENV_NAME' (контейнер: $CONTAINER_NAME)..."
     fi
@@ -200,10 +205,10 @@ launch_container() {
     local rc=0
     "${RUN_CMD[@]}" || rc=$?
     # Постобработка: при успехе и без --keep удаляем контейнер.
-    # В webui-режиме Ctrl+C (SIGINT→130 / SIGTERM→143) — ШТАТНАЯ остановка
-    # сервера, а не сбой: чистим тихо, без «оставлен для отладки».
+    # В webui/tg-режимах Ctrl+C (SIGINT→130 / SIGTERM→143) — ШТАТНАЯ остановка
+    # сервера/моста, а не сбой: чистим тихо, без «оставлен для отладки».
     local interrupted=0
-    if [[ "${WEBUI_MODE:-0}" == "1" && ($rc -eq 130 || $rc -eq 143) ]]; then
+    if [[ ("${WEBUI_MODE:-0}" == "1" || "${TG_MODE:-0}" == "1") && ($rc -eq 130 || $rc -eq 143) ]]; then
         interrupted=1
     fi
     if [[ ($rc -eq 0 || $interrupted -eq 1) && "$KEEP" != "1" ]]; then
@@ -212,7 +217,11 @@ launch_container() {
         # (проект на хосте никуда не делся, каталог пересоздастся при нужде).
         cleanup_workspace_mounts "$ENV_NAME"
         if [[ $interrupted -eq 1 ]]; then
-            log "web-ui остановлен (Ctrl+C), контейнер '$CONTAINER_NAME' удалён"
+            if [[ "${TG_MODE:-0}" == "1" ]]; then
+                log "Telegram-мост остановлен (Ctrl+C), контейнер '$CONTAINER_NAME' удалён"
+            else
+                log "web-ui остановлен (Ctrl+C), контейнер '$CONTAINER_NAME' удалён"
+            fi
         else
             log "Контейнер '$CONTAINER_NAME' удалён"
         fi

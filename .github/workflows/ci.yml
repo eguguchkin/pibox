@@ -18,14 +18,16 @@ jobs:
       - name: shellcheck
         run: |
           shellcheck install.sh docker/entrypoint.sh docker/webui.sh \
-            bin/pibox lib/*.sh \
+            docker/pi-telegram-bridge.sh bin/pibox lib/*.sh \
             tests/smoke.sh tests/helpers.sh
 
       - name: "shfmt (стиль: 4 пробела)"
         run: |
           go install mvdan.cc/shfmt/v3/cmd/shfmt@latest
-          "$(go env GOPATH)/bin/shfmt" -d -i 4 install.sh docker/entrypoint.sh docker/webui.sh \
-            bin/pibox lib/*.sh tests/smoke.sh tests/helpers.sh
+          SHFMT="$(go env GOPATH)/bin/shfmt"
+          "$SHFMT" -d -i 4 install.sh docker/entrypoint.sh docker/webui.sh \
+            docker/pi-telegram-bridge.sh bin/pibox lib/*.sh \
+            tests/smoke.sh tests/helpers.sh
 
       - name: Исполняемые биты скриптов в git
         run: |
@@ -33,7 +35,8 @@ jobs:
           while IFS= read -r f; do
             mode="$(git ls-files -s "$f" | awk '{print $1}')"
             if [ "$mode" != "100755" ]; then
-              echo "::error::${f} не исполняемый в git (режим ${mode}). Запустите: git update-index --chmod=+x ${f}"
+              echo "::error::${f} не исполняемый в git (режим ${mode})."
+              echo "::error::Запустите: git update-index --chmod=+x ${f}"
               status=1
             fi
           done < <(git ls-files '*.sh')

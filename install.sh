@@ -5,7 +5,9 @@
 # Разворачивает рабочую инсталляцию в PIBOX_DIR (по умолчанию ~/pibox):
 #   bin/pibox       CLI — точка входа (подгружает lib/)
 #   lib/            модули CLI (копируются целиком, зеркало исходников)
-#   docker/         build-контекст (Dockerfile, entrypoint.sh, .dockerignore)
+#   docker/         build-контекст (Dockerfile, entrypoint.sh, webui.sh,
+#                     pi-telegram-bridge.sh, telegram-socks-preload.cjs,
+#                     .dockerignore)
 #   template/common/  СЛОЙ 1: продукт — начальное состояние окружений
 #                     (перезаписывается ВСЕГДА: установка = обновление)
 #   template/user/    СЛОЙ 2: личные инварианты владельца (models.json,
@@ -252,6 +254,8 @@ check_sources() {
         "docker/Dockerfile"
         "docker/entrypoint.sh"
         "docker/webui.sh"
+        "docker/pi-telegram-bridge.sh"
+        "docker/telegram-socks-preload.cjs"
         "docker/.dockerignore"
         "template/README.md"
         "template/extensions.txt"
@@ -293,7 +297,8 @@ install() {
     log "Обновляю build-контекст в docker/"
     safe_rm_rf "$target_docker"
     mkdir -p "$target_docker"
-    for file in Dockerfile entrypoint.sh webui.sh .dockerignore; do
+    for file in Dockerfile entrypoint.sh webui.sh pi-telegram-bridge.sh \
+        telegram-socks-preload.cjs .dockerignore; do
         log "Копирую: $file → docker/"
         cp "$SRC_DIR/docker/$file" "$target_docker/"
     done

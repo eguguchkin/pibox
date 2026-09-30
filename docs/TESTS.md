@@ -48,8 +48,8 @@
 ## Линт и стиль (работают везде, включая контейнер)
 
 ```bash
-shellcheck install.sh docker/entrypoint.sh docker/webui.sh bin/pibox lib/*.sh tests/*.sh tests/docker-stub/docker
-shfmt -d -i 4 install.sh docker/entrypoint.sh docker/webui.sh bin/pibox lib/*.sh tests/*.sh tests/docker-stub/docker
+shellcheck install.sh docker/entrypoint.sh docker/webui.sh docker/pi-telegram-bridge.sh bin/pibox lib/*.sh tests/*.sh tests/docker-stub/docker
+shfmt -d -i 4 install.sh docker/entrypoint.sh docker/webui.sh docker/pi-telegram-bridge.sh bin/pibox lib/*.sh tests/*.sh tests/docker-stub/docker
 ```
 
 ## Частые проблемы

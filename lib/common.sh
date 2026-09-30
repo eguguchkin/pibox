@@ -88,6 +88,13 @@ pibox — запуск Pi Coding Agent в изолированном Docker-ко
                                Ctrl+C — остановка. Опции как у run
                                (-e, -p, -E, --memory, ...); --port N —
                                другой порт (host и container)
+    tg [OPTS]                  контейнер в режиме Telegram-моста: RPC-демон
+                               pi + @llblab/pi-telegram — задания и отчёты
+                               через бота. Нужен токен в
+                               ~/.pi/agent/telegram.json (шаблон —
+                               template/user). Без TTY/TUI; Ctrl+C —
+                               остановка. Опции как у run (кроме
+                               аргументов pi после --)
     build [--no-cache]         сборка Docker-образа
     env list|create|remove     управление окружениями
     env upgrade NAME [-n]      довести продуктовый каркас окружения до
@@ -143,6 +150,7 @@ pibox — запуск Pi Coding Agent в изолированном Docker-ко
     pibox                      # запуск в default окружении
     pibox webui                # браузерный UI: http://localhost:8787
     pibox webui --port 9000    # то же на порту 9000
+    pibox tg                   # Telegram-мост: задания/отчёты через бота
     pibox -e php8              # запуск в окружении php8
     pibox -p 8080:80           # проброс порта 8080 на 80
     pibox -- pi -p "test"      # передача аргументов pi

@@ -262,6 +262,34 @@ setup_git_safe() {
 
 # --- 6. Подготовка окружения для exec -----------------------------------------
 
+# Опциональный автостарт Telegram-моста (pi-telegram-bridge): RPC-демон pi
+# с подключением @llblab/pi-telegram. Условие — настроенный мост
+# ($PI_HOME/.pi/agent/telegram.json существует); выключается
+# PIBOX_NO_TELEGRAM_BRIDGE=1. Фон перед exec: процесс переживает exec (его
+# забирает tini как PID 1), лог — .local/state/pi-bridge/autostart.log.
+start_telegram_bridge() {
+    # Контракт с pibox tg (lib/cmd-tg.sh): когда команда контейнера —
+    # «pi-telegram-bridge», мост запускается как foreground-CMD сам; фоновый
+    # автостарт здесь породил бы второй демон и конфликт singleton-lock.
+    [ "${1:-}" = "pi-telegram-bridge" ] && return 0
+    [ "${PIBOX_NO_TELEGRAM_BRIDGE:-0}" = "1" ] && return 0
+    [ -f "$PI_HOME/.pi/agent/telegram.json" ] || return 0
+    local bridge=""
+    [ -x /usr/local/bin/pi-telegram-bridge ] && bridge=/usr/local/bin/pi-telegram-bridge
+    if [ -z "$bridge" ] && [ -x "$PI_HOME/bin/pi-telegram-bridge" ]; then
+        bridge="$PI_HOME/bin/pi-telegram-bridge"
+    fi
+    if [ -z "$bridge" ]; then
+        warn "telegram.json настроен, но pi-telegram-bridge не найден — автостарт пропущен"
+        return 0
+    fi
+    log "автостарт Telegram-моста"
+    gosu "$PI_USER:$PI_GROUP" mkdir -p "$PI_HOME/.local/state/pi-bridge"
+    gosu "$PI_USER:$PI_GROUP" env HOME="$PI_HOME" \
+        nohup "$bridge" start \
+        >"$PI_HOME/.local/state/pi-bridge/autostart.log" 2>&1 &
+}
+
 prepare_env() {
     # КРИТИЧНО: gosu меняет UID/GID, но НЕ переписывает env-переменные.
     # Без явного экспорта:
@@ -327,6 +355,7 @@ Check Dockerfile ENTRYPOINT."
     ensure_sdk_shims
     setup_git_safe
     prepare_env
+    start_telegram_bridge "$@"
     exec_command "$@"
 }
 

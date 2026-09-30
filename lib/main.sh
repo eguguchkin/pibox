@@ -40,6 +40,9 @@ main() {
     user)
         cmd_user "$@"
         ;;
+    tg)
+        cmd_tg "$@"
+        ;;
     extensions)
         cmd_extensions "$@"
         ;;
