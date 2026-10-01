@@ -87,8 +87,9 @@ pibox webui               # откроет http://localhost:8787 в браузе
 ### Сценарий 3. «Поставить задачу из метро и забрать отчёт» — Telegram
 
 ```bash
-# однажды: создайте бота у @BotFather и впишите токен
-vi ~/pibox/template/user/.pi/agent/telegram.json
+# однажды: создайте бота у @BotFather и заполните конфиг по
+# шаблону-инструкции (там же — как узнать свой Telegram ID):
+vi ~/pibox/template/user/.pi/agent/telegram.json   # образец: telegram.json.example
 
 # и запускайте мост:
 pibox tg                  # агент без TUI: задания и отчёты через бота
@@ -209,7 +210,7 @@ Anthropic/OpenAI/Copilot). Каталог установки по умолчан
 | --- | --- |
 | `pibox [run] [ОПЦИИ] [--] [PI_ARGS…]` | Запуск агента в TUI (run — по умолчанию) |
 | `pibox webui [ОПЦИИ] [--port N]` | Агент с браузерным UI: пробрасывает порт (по умолчанию `8787:8787`), сам открывает страницу (готовность порта ждёт фоновый waiter; `--no-open` отключает), печатает зелёную ссылку; логи агента — в консоль. Опции как у run; `--port N` — другой порт (хост и контейнер) |
-| `pibox tg [ОПЦИИ]` | Контейнер в режиме Telegram-моста: RPC-демон pi без TUI, задания и отчёты через бота. Нужен токен в `template/user/.pi/agent/telegram.json`. Сеть режет провайдер — `PIBOX_TELEGRAM_PROXY='socks5h://user:pass@host:port' pibox tg` (пробрасывается автоматически). Опции как у run, кроме аргументов pi; Ctrl+C — остановка |
+| `pibox tg [ОПЦИИ]` | Контейнер в режиме Telegram-моста: RPC-демон pi без TUI, задания и отчёты через бота. Нужен токен в `template/user/.pi/agent/telegram.json` (шаблон-инструкция с allowedUserId — `telegram.json.example`). Сеть режет провайдер — `PIBOX_TELEGRAM_PROXY='socks5h://user:pass@host:port' pibox tg` (пробрасывается автоматически). Опции как у run, кроме аргументов pi; Ctrl+C — остановка |
 | `pibox build [--no-cache]` | Сборка Docker-образа |
 | `pibox shell [-e ИМЯ]` | Отладочная bash-оболочка в контейнере |
 

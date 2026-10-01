@@ -53,9 +53,24 @@ check_prereqs() {
     token="$(jq -r '.profiles.default.botToken // empty' "$cfg")"
     [[ "$token" =~ ^[0-9]+:[A-Za-z0-9_-]{6,}$ ]] || {
         echo "токен в ${cfg} не похож на валидный (заглушка REPLACE_ME?) —"
-        echo "заполни реальным токеном из @BotFather"
+        echo "шаблон с инструкцией: template/user/.pi/agent/telegram.json.example"
         return 1
     }
+    # allowedUserId: отсутствует — подсказка про строгое владение; заведомо
+    # мёртвое значение (0/мусор) — отказ: llblab молча отвергает всех, и бот
+    # выглядит «включённым», но не отвечает никому.
+    local uid
+    uid="$(jq -r '.profiles.default.allowedUserId // empty' "$cfg")"
+    if [ -z "$uid" ]; then
+        echo "подсказка: allowedUserId не задан — владельцем бота станет первый,"
+        echo "  кто напишет /start. Для строгого владения впишите свой числовой Id"
+        echo "  (узнать: @userinfobot) в ${cfg}"
+    elif ! [[ "$uid" =~ ^[1-9][0-9]*$ ]]; then
+        echo "allowedUserId='$uid' в ${cfg} не годится: llblab будет молча"
+        echo "  отвергать всех. Впишите свой числовой Id (узнать: @userinfobot)"
+        echo "  или удалите поле — шаблон: telegram.json.example"
+        return 1
+    fi
 }
 
 # fifo + держатель конца записи (не даёт rpc-ридеру увидеть EOF).

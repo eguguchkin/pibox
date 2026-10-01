@@ -21,8 +21,9 @@
 - `user` — то, что должно переживать пересоздание окружения:
   `models.json` (ключи провайдеров), `USER.md` (личные инструкции),
   личные расширения и конфиги (`selectel-thinking-off.ts`,
-  `pi-image-gen/settings.json`, `telegram.json` — токен Telegram-моста,
-  заглушка REPLACE_ME), `.bashrc.user`. Файлы из `user`
+  `pi-image-gen/settings.json`, `telegram.json` — токен Telegram-моста
+  (шаблон-инструкция с allowedUserId — рядом, `telegram.json.example`)),
+  `.bashrc.user`. Файлы из `user`
   копируются в окружение при каждом запуске — правки на хосте доходят
   автоматически. Файл из `user` с тем же путём перекрывает `common`.
 - Окружение — не производная: сессии, память, доустановленные расширения
