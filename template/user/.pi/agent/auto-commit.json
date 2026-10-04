@@ -1,0 +1,8 @@
+{
+	"enabled": false,
+	"maxDiffChars": 10000,
+	"maxMessageChars": 2000,
+	"exclude": [],
+	"notifyOnNonRepo": true,
+	"titleTimeoutMs": 300000
+}

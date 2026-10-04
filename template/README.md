@@ -17,12 +17,17 @@
 - `common` задаёт стартовое состояние: `.pi/agent/AGENTS.md` (инструкции
   агента о контейнере), скиллы (`workspace-hygiene`, `install-languages`,
   `networking`, `extension-hygiene`, `show-image`), расширения
-  `terminal-probe`.
+  `terminal-probe` (снимки экрана консоли) и `auto-commit`
+  (авто-коммит после итерации агента; выключен по умолчанию,
+  см. `extensions/auto-commit.md`).
 - `user` — то, что должно переживать пересоздание окружения:
   `models.json` (ключи провайдеров), `USER.md` (личные инструкции),
   личные расширения и конфиги (`selectel-thinking-off.ts`,
-  `pi-image-gen/settings.json`, `telegram.json` — токен Telegram-моста
-  (шаблон-инструкция с allowedUserId — рядом, `telegram.json.example`)),
+  `pi-image-gen/settings.json`, `auto-commit.json` — конфиг авто-коммита;
+  переключение через `/autocommit` живёт в окружении до перезапуска —
+  сохранять через `pibox user pull`),
+  `telegram.json` — токен Telegram-моста
+  (шаблон-инструкция с allowedUserId — рядом, `telegram.json.example`),
   `.bashrc.user`. Файлы из `user`
   копируются в окружение при каждом запуске — правки на хосте доходят
   автоматически. Файл из `user` с тем же путём перекрывает `common`.

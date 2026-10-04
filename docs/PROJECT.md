@@ -31,8 +31,8 @@ PIBOX — обвязка вокруг [Pi Coding Agent](https://pi.dev/) (npm: `
 | `docker/` | build-контекст: `Dockerfile` — multi-stage: ubuntu 24.04 + node 24 + pi + pi-web-ui + mise; ARG-версии пинуются; pi и pi-web-ui ставятся одной npm-командой (общий SDK дедупится в один экземпляр), g++ для node-pty в builder и в runtime для нативных сборок расширений, стрипы платформенного жира; `entrypoint.sh` — от root: подстановка UID/GID хост-юзера → dotfiles-слои (заглушка + `.pibox`/`.user`) → gosu → tini → CMD (по умолчанию `pi`; из `pibox webui` — лаунчер `webui`; из `pibox tg` — `pi-telegram-bridge run`); `webui.sh` — лаунчер web-ui в контейнере: чистка control-сокета, зелёная строка-ссылка `http://localhost:<hp>` (+ `?token=` из URL-safe `PI_WEB_TOKEN`), `exec pi-web-ui --no-browser --host 0.0.0.0` — дальше штатные логи сервера/агента в консоль; ставится в `/usr/local/bin/webui`; `pi-telegram-bridge.sh` — RPC-демон pi с автоподключением Telegram-моста (`@llblab/pi-telegram`): run (foreground, команда контейнера `pibox tg`), start/stop/status/connect (фоновый демон; автостарт из entrypoint при настроенном `~/.pi/agent/telegram.json`, выключается `PIBOX_NO_TELEGRAM_BRIDGE=1`), логи в `.local/state/pi-bridge/`; ставится в `/usr/local/bin/pi-telegram-bridge`; `telegram-socks-preload.cjs` — preload-хук SOCKS5-прокси для Telegram (см. контракт cmd-tg ниже); ставится в `/usr/local/lib/pi-telegram/`; `.dockerignore` — контекст = только файлы сборки |
 | `bin/pibox` + `lib/` | исходник CLI `pibox` (после install — `~/pibox/bin/pibox` + `~/pibox/lib/`); точка входа подгружает модули в фиксированном порядке: `common.sh` (константы, хелперы, usage, проверки) → `env.sh` (окружения) → `docker-cmd.sh` (сборка docker run + webui/tg-режимы) → `ext-manifest.sh` (манифест расширений) → `cmd-*.sh` (подкоманды; `cmd-run.sh` содержит общее ядро `launch_container`, его переиспользуют `cmd-webui.sh` и `cmd-tg.sh`) → `main.sh` (диспетчер). Зависимости только «вниз», циклов нет |
 | `install.sh` | установщик: создаёт `~/pibox`, bin в PATH, блок `>>> pibox installer >>>` в rc-файле |
-| `template/common/` | СЛОЙ 1: начальное состояние окружений — стартовые знания агента (`.pi/agent/AGENTS.md`, скиллы `install-languages`, `workspace-hygiene`, `networking`, `extension-hygiene`, `show-image`, расширение `terminal-probe`) |
-| `template/user/` | СЛОЙ 2: личные инварианты — `models.json`, `USER.md`, `telegram.json` (токен Telegram-моста; заглушка REPLACE_ME — мост отказывается стартовать с ней; шаблон-инструкция с allowedUserId — `telegram.json.example`), личные расширения (`selectel-thinking-off.ts`), конфиги (`pi-image-gen/`); в репо — заглушки, реальные значения — в установке |
+| `template/common/` | СЛОЙ 1: начальное состояние окружений — стартовые знания агента (`.pi/agent/AGENTS.md`, скиллы `install-languages`, `workspace-hygiene`, `networking`, `extension-hygiene`, `show-image`, расширения `terminal-probe`, `auto-commit` — авто-коммит после итерации агента, выключен по умолчанию) |
+| `template/user/` | СЛОЙ 2: личные инварианты — `models.json`, `USER.md`, `telegram.json` (токен Telegram-моста; заглушка REPLACE_ME — мост отказывается стартовать с ней; шаблон-инструкция с allowedUserId — `telegram.json.example`), личные расширения (`selectel-thinking-off.ts`), конфиги (`pi-image-gen/`, `auto-commit.json` — конфиг авто-коммита); в репо — заглушки, реальные значения — в установке |
 | `template/extensions.txt` | манифест расширений pi (`npm:имя@версия`); ставятся `pibox extensions install`, аудит — `doctor` (D9) |
 | `tests/smoke.sh` + `tests/helpers.sh` | >100 автопроверок: install → build → CLI → runtime; флаги `--offline/--keep/--rebuild/--no-docker`; хелперы (счётчики, `expect_*`, `docker_pibox`, очистка) — в `helpers.sh`; docker-заглушка для прогонов в контейнере — `tests/docker-stub/`, см. `docs/TESTS.md` |
 
@@ -128,6 +128,14 @@ CI (`.github/workflows/ci.yml`): shellcheck + проверка exec-битов +
   node_modules в шаблон: ~500 МБ чужого кода в git + платформенные бинарники
   в коммите теряют портируемость репо.
 + Файлы окружения (`env/*`, кроме шаблонов) при переустановке не затрагивать.
++ **Расширение auto-commit** (`~/.pi/agent/extensions/`, слой `template/common`): после
+  каждой завершённой итерации агента (`agent_settled`) делает git-коммит изменений
+  рабочей папки: тема — текущая модель сессии (запрос + ответ + дифф на входе), тело —
+  запрос пользователя, ответ агента и список файлов. Выключен по умолчанию; конфиг —
+  `~/.pi/agent/auto-commit.json` (слой user) с пер-проектным override `<проект>/.pi/auto-commit.json`;
+  переключение — `/autocommit [on|off|status]`. Детали —
+  `template/common/.pi/agent/extensions/auto-commit.md`.
+
 + **Расширение terminal-probe** (в `.pi/extensions/` проекта, `~/.pi/agent/extensions/`
   и `template/common/.pi/agent/extensions/` шаблона): инструмент `terminal_probe` —
   запускает консольную команду под настоящим pty (через системный `script`, без
