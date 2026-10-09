@@ -443,6 +443,65 @@ fi
 expect_contains "C12: проброс порта в команде" "$DRY3" "-p 28111:8080"
 expect_contains "C12: проброс переменной" "$DRY3" "-e SMOKE_VAR"
 
+# C34: dev-порт 3000 — дефолтный проброс и переменная PIBOX_DEV_PORT
+DRYD=""
+if DRYD="$(cd "$TEST_WS" && "$BIN" --dry-run 2>/dev/null)"; then
+    ok "C34: dry-run для dev-порта"
+else
+    fail "C34: dry-run завершился с ошибкой"
+fi
+expect_contains "C34: авто -p 3000:3000" "$DRYD" "-p 3000:3000"
+expect_contains "C34: PIBOX_DEV_PORT=3000 передан" "$DRYD" "-e PIBOX_DEV_PORT=3000"
+
+# C35: dev-порт — свой -p 8080:3000 заменяет авто-маппинг, переменная = хост-порт
+DRYD2=""
+if DRYD2="$(cd "$TEST_WS" && "$BIN" --dry-run -p 8080:3000 2>/dev/null)"; then
+    ok "C35: dry-run с -p 8080:3000"
+else
+    fail "C35: dry-run с -p 8080:3000 завершился с ошибкой"
+fi
+expect_contains "C35: маппинг юзера сохранён" "$DRYD2" "-p 8080:3000"
+expect_contains "C35: PIBOX_DEV_PORT=8080 (хост-порт юзера)" "$DRYD2" "-e PIBOX_DEV_PORT=8080"
+if printf '%s' "$DRYD2" | grep -qF -- '-p 3000:3000'; then
+    fail "C35: авто -p 3000:3000 не должен добавляться при своём маппинге"
+else
+    ok "C35: авто -p 3000:3000 не дублируется"
+fi
+
+# C36: dev-порт — -p 0:3000 отключает проброс (переменная не передаётся)
+DRYD3=""
+if DRYD3="$(cd "$TEST_WS" && "$BIN" --dry-run -p 0:3000 2>/dev/null)"; then
+    ok "C36: dry-run с -p 0:3000"
+else
+    fail "C36: dry-run с -p 0:3000 завершился с ошибкой"
+fi
+if printf '%s' "$DRYD3" | grep -qF -- 'PIBOX_DEV_PORT='; then
+    fail "C36: -p 0:3000 — переменная PIBOX_DEV_PORT не должна передаваться"
+else
+    ok "C36: -p 0:3000 — без PIBOX_DEV_PORT"
+fi
+
+# C37: dev-порт — -p 3000:8080 (порт 3000 в роли хост-порта) не конфликтует
+DRYD4=""
+if DRYD4="$(cd "$TEST_WS" && "$BIN" --dry-run -p 3000:8080 2>/dev/null)"; then
+    ok "C37: dry-run с -p 3000:8080"
+else
+    fail "C37: dry-run с -p 3000:8080 завершился с ошибкой"
+fi
+expect_contains "C37: оба маппинга присутствуют" "$DRYD4" "-p 3000:8080"
+expect_contains "C37: авто -p 3000:3000 добавлен" "$DRYD4" "-p 3000:3000"
+expect_contains "C37: PIBOX_DEV_PORT=3000" "$DRYD4" "-e PIBOX_DEV_PORT=3000"
+
+# C38: dev-порт — пробрасывается и в webui-режиме
+DRYD5=""
+if DRYD5="$(cd "$TEST_WS" && "$BIN" webui --dry-run 2>/dev/null)"; then
+    ok "C38: webui dry-run для dev-порта"
+else
+    fail "C38: webui dry-run завершился с ошибкой"
+fi
+expect_contains "C38: -p 3000:3000 в webui" "$DRYD5" "-p 3000:3000"
+expect_contains "C38: PIBOX_DEV_PORT в webui" "$DRYD5" "-e PIBOX_DEV_PORT=3000"
+
 # C13: --git-safe
 DRY4=""
 if DRY4="$(cd "$TEST_WS" && "$BIN" --dry-run --git-safe 2>/dev/null)"; then

@@ -4,6 +4,21 @@
 # Глобальный массив, в который собирается готовая команда docker run.
 RUN_CMD=()
 
+# Остальное:
+#   PUBLISH_OPTS — явные -p пользователя. На их фоне добавляется
+#   дефолтный проброс порта 3000 (см. константу PIBOX_DEV_PORT ниже):
+#   поднимающийся в контейнере dev-сервер доступен с хоста без
+#   дополнительных флагов. Хост-порт маппинга доезжает в контейнер
+#   переменной PIBOX_DEV_PORT (агент по ней знает, какой порт слушать
+#   снаружи; см. контракт с docker/entrypoint.sh и AGENTS.md шаблона).
+#   Правила:
+#   - свой -p на контейнерный 3000 — авто-маппинг не добавляется;
+#     если хост-порт юзера отличается от 3000 (-p 8080:3000),
+#     PIBOX_DEV_PORT = хост-порт юзера;
+#   - -p 0:3000 — ЯВНЫЙ отказ от проброса (эпохемеральный порт),
+#     авто-маппинг не добавляется, переменная не передаётся;
+#   - иное использование порта 3000 (хост:другой-контейнерный) —
+#     не конфликтует: авто-маппинг добавляется как обычно.
 # Режимы webui и tg (WEBUI_MODE/WEBUI_PORT/WEBUI_HOST_PORT, TG_MODE) — НЕ
 # глобальные переменные. Каждый вход (cmd_run, cmd_webui, cmd-tg) объявляет
 # их локально, а launch_container и build_docker_run_cmd видят их через
@@ -14,6 +29,12 @@ RUN_CMD=()
 # webui-порта, -e PI_WEB_PORT/WEBUI_HOST_PORT для лаунчера внутри контейнера
 # (см. его контракт в docker/webui.sh) или команда контейнера «webui» /
 # «pi-telegram-bridge run».
+
+# Дефолтный порт для dev-серверов агента (publish в docker run и
+# переменная PIBOX_DEV_PORT в контейнер). Обе стороны константы:
+# build_docker_run_cmd (docker-cmd.sh) и AGENTS.md шаблона
+# (template/common/.pi/agent/AGENTS.md).
+readonly PIBOX_DEV_PORT=3000
 
 # Заполняет RUN_CMD аргументами для docker run.
 # Переменные берутся динамически: функция вызывается из launch_container
@@ -59,6 +80,35 @@ build_docker_run_cmd() {
     for opt in ${PUBLISH_OPTS[@]+"${PUBLISH_OPTS[@]}"}; do
         RUN_CMD+=("-p" "$opt")
     done
+
+    # Дефолтный проброс dev-порта 3000 (см. шапку модуля). Правила:
+    #   - маппинг на контейнерный 3000 уже есть (свой -p) — не дублируем;
+    #     PIBOX_DEV_PORT = хост-порт этого маппинга (PIBOX_DEV_PORT_HOST);
+    #   - -p 0:3000 — явный отказ: переменную тоже не передаём.
+    local dev_port_opt=""  # найденный маппинг на контейнерный 3000
+    local dev_ephemeral="" # флаг «проброс явно выключен»
+    for opt in ${PUBLISH_OPTS[@]+"${PUBLISH_OPTS[@]}"}; do
+        local cport="${opt##*:}"
+        cport="${cport%/*}"
+        if [[ "$cport" == "$PIBOX_DEV_PORT" ]]; then
+            dev_port_opt="$opt"
+            # bare-порт или :0 слева — отказ от проброса (docker
+            # назначает хост-порт сам; для детерминированного dev-порта
+            # это интерпретируем как «проброс не нужен»)
+            local hport="${opt%%:*}"
+            [[ "$hport" == "0" || "$hport" == "$opt" ]] && dev_ephemeral=1
+        fi
+    done
+    local dev_host_port=""
+    if [[ -n "$dev_ephemeral" ]]; then
+        : # явный отказ — ничего не добавляем и не сообщаем агенту
+    elif [[ -n "$dev_port_opt" ]]; then
+        dev_host_port="${dev_port_opt%%:*}"
+    else
+        RUN_CMD+=("-p" "${PIBOX_DEV_PORT}:${PIBOX_DEV_PORT}")
+        dev_host_port="$PIBOX_DEV_PORT"
+    fi
+    [[ -n "$dev_host_port" ]] && RUN_CMD+=("-e" "PIBOX_DEV_PORT=${dev_host_port}")
 
     # Режим pibox webui: сервер внутри слушает PI_WEB_PORT (лаунчер webui.sh);
     # WEBUI_HOST_PORT — для зелёной ссылки. Авто -p добавляем, только если
